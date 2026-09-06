@@ -11,7 +11,7 @@
  *   ENGINE  large, immutable, keyed by URL so it survives releases untouched
  */
 
-const VERSION = '4.25.0';
+const VERSION = '4.26.0';
 const SHELL_CACHE = `miyee-shell-${VERSION}`;
 const ENGINE_CACHE = 'miyee-engine-v1';
 

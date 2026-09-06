@@ -2047,3 +2047,22 @@ body {
 .span-box--doubt:hover {
   background: rgba(var(--color-warning-rgb, 168, 75, 47), 0.22);
 }
+
+/* ---- DSC panel: token mode and drawing the signature area ---------- */
+.sub-tabs--tight { margin-bottom: var(--space-12); }
+.sub-tabs--tight .sub-tab { padding: var(--space-6) var(--space-10); font-size: var(--font-size-sm); }
+
+.form-actions--split { display: flex; gap: var(--space-8); margin-bottom: var(--space-8); }
+.form-actions--split > * { flex: 1; text-align: center; }
+
+#dsc-draw { margin-top: var(--space-8); }
+
+/* While a signature box is being dragged the overlay takes the pointer,
+   so a click cannot land on a form field underneath by accident. */
+.overlay--picking { cursor: crosshair; }
+.draw-box {
+    position: absolute;
+    border: 2px dashed var(--color-primary, #218089);
+    background: rgba(33, 128, 141, 0.14);
+    pointer-events: none;
+}

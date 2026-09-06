@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.25.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.25.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.25.0">
-    <link rel="manifest" href="site.webmanifest?v=4.25.0">
+    <link rel="icon" href="favicon.svg?v=4.26.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.26.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.26.0">
+    <link rel="manifest" href="site.webmanifest?v=4.26.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.25.0">
+    <link rel="stylesheet" href="style.css?v=4.26.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -32,7 +32,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.25.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.26.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -377,23 +377,44 @@
                     <section class="dsc-panel">
                         <h4 class="side-subtitle">Digital signature (DSC)</h4>
                         <p class="hint hint--inline">A real certificate signature: the file is sealed so a reader
-                           can show who signed it and whether anything changed afterwards. Your certificate file
-                           and password stay on this device - the signing happens in this browser, and neither is
-                           ever sent anywhere.</p>
-                        <p class="hint hint--inline"><strong>A USB token cannot be used here.</strong> Browsers
-                           cannot reach a hardware DSC token, so this needs a certificate <em>file</em>
-                           (<code>.p12</code> or <code>.pfx</code>). If yours is only on a token, sign with the
-                           token's own software instead.</p>
-                        <div class="form-group">
-                            <label class="form-label" for="dsc-file">Certificate file (.p12 / .pfx)</label>
-                            <input type="file" id="dsc-file" class="form-control" accept=".p12,.pfx">
+                           can show who signed it and whether anything changed afterwards. Sign with the DSC on a
+                           USB token, or with a certificate file. Either way the document stays on this device -
+                           nothing about it is uploaded anywhere.</p>
+                        <div class="sub-tabs sub-tabs--tight">
+                            <button class="sub-tab active" data-dscmode="token">USB token</button>
+                            <button class="sub-tab" data-dscmode="file">Certificate file</button>
                         </div>
-                        <div class="form-group">
-                            <label class="form-label" for="dsc-pass">Certificate password</label>
-                            <input type="password" id="dsc-pass" class="form-control" autocomplete="off"
-                                   placeholder="The password protecting the file">
+
+                        <div class="sub-panel" data-dscpanel="token">
+                            <div id="dsc-token-status" class="result-box">Plug your token in and press <em>Look again</em>.</div>
+                            <div class="form-group hidden" id="dsc-cert-group">
+                                <label class="form-label" for="dsc-cert">Certificate on the token</label>
+                                <select id="dsc-cert" class="form-control"></select>
+                            </div>
+                            <div class="form-actions form-actions--split">
+                                <button class="btn btn--secondary btn--sm" id="dsc-token-refresh">↻ Look again</button>
+                                <a class="btn btn--secondary btn--sm"
+                                   href="https://github.com/vipinnairv/VIPINPDFSUITE/tree/main/signer"
+                                   target="_blank" rel="noopener">Set up the token helper</a>
+                            </div>
+                            <p class="hint hint--inline">Plug the token in, then press <em>Look again</em>.
+                               A browser cannot talk to a USB token by itself, so a small helper runs on this
+                               computer and does it. The document stays here: only a 32-byte hash of it is sent
+                               to the helper, and the PIN is typed on the helper's own window, never in this page.</p>
                         </div>
-                        <div id="dsc-who" class="result-box hidden"></div>
+
+                        <div class="sub-panel hidden" data-dscpanel="file">
+                            <div class="form-group">
+                                <label class="form-label" for="dsc-file">Certificate file (.p12 / .pfx)</label>
+                                <input type="file" id="dsc-file" class="form-control" accept=".p12,.pfx">
+                            </div>
+                            <div class="form-group">
+                                <label class="form-label" for="dsc-pass">Certificate password</label>
+                                <input type="password" id="dsc-pass" class="form-control" autocomplete="off"
+                                       placeholder="The password protecting the file">
+                            </div>
+                            <div id="dsc-who" class="result-box hidden"></div>
+                        </div>
                         <div class="form-row">
                             <div class="form-group"><label class="form-label">Reason</label>
                                 <input type="text" id="dsc-reason" class="form-control" placeholder="I approve this document"></div>
@@ -409,7 +430,12 @@
                                 <option value="tr">Top right</option>
                                 <option value="bl" selected>Bottom left</option>
                                 <option value="br">Bottom right</option>
+                                <option value="drawn" disabled>The area you drew</option>
                             </select>
+                            <button class="btn btn--secondary btn--sm btn--full-width" id="dsc-draw">
+                                ▭ Draw the box on the page</button>
+                            <p class="hint hint--inline" id="dsc-area-note">Or drag a box on the page itself to
+                               put the signature exactly where you want it.</p>
                         </div>
                         <button class="btn btn--primary btn--full-width" id="dsc-sign">🔏 Sign digitally &amp; save</button>
                         <div id="dsc-result" class="result-box hidden"></div>
@@ -1160,6 +1186,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.25.0"></script>
+    <script src="app.js?v=4.26.0"></script>
 </body>
 </html>
