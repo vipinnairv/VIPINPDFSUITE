@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.25.0';
+const APP_VERSION = '4.26.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -361,6 +361,89 @@ function bytesToBinary(bytes) {
     for (let i = 0; i < arr.length; i += 0x8000) {
         out += String.fromCharCode.apply(null, arr.subarray(i, i + 0x8000));
     }
+    return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Native signing helper (USB DSC tokens)                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A browser cannot reach a USB signing token: there is no API for PKCS#11,
+ * and there is not going to be one. So MiyeePDF talks to a small helper the
+ * person runs on their own computer, which drives the token's driver and
+ * asks for the PIN in its own window.
+ *
+ * What crosses that connection is worth being precise about: the document
+ * never does. The engine works out which bytes the signature covers, this
+ * page hashes them, and only the 32-byte hash goes to the helper. The PIN
+ * is never typed into this page and the private key never leaves the token.
+ */
+const Signer = {
+    base: 'http://127.0.0.1:8787',
+    info: null,
+
+    async fetch(path, options = {}, timeoutMs = 4000) {
+        const stop = new AbortController();
+        const timer = setTimeout(() => stop.abort(), timeoutMs);
+        try {
+            const res = await fetch(this.base + path, { ...options, signal: stop.signal });
+            const body = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                const err = new Error(body.message || body.error || `Helper returned ${res.status}`);
+                err.code = body.error;
+                throw err;
+            }
+            return body;
+        } finally {
+            clearTimeout(timer);
+        }
+    },
+
+    /** Is the helper running, and does it see a token? Never throws: not
+     *  running is the ordinary case, not an error. */
+    async probe() {
+        try {
+            this.info = await this.fetch('/status', {}, 2500);
+            return this.info;
+        } catch (err) {
+            this.info = null;
+            return null;
+        }
+    },
+
+    /** Long, because a token that hides its certificates makes the helper
+     *  ask for a PIN before it can answer. */
+    certificates() {
+        return this.fetch('/certificates', {}, 120000);
+    },
+
+    /** Hand over the hash and get a finished CMS signature back. The wait is
+     *  long because a person has to type a PIN at the other end. */
+    sign(request) {
+        return this.fetch('/sign', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(request),
+        }, 180000);
+    },
+};
+
+/** Base64 of a Uint8Array, for the small payloads the helper exchanges. */
+function bytesToB64(bytes) {
+    return btoa(bytesToBinary(bytes));
+}
+
+/** Text from a certificate, safe to drop into markup. */
+function escapeText(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function bytesToHex(bytes) {
+    const arr = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+    let out = '';
+    for (let i = 0; i < arr.length; i++) out += arr[i].toString(16).padStart(2, '0');
     return out;
 }
 
@@ -1794,6 +1877,7 @@ const SignTool = {
         }));
 
         this.view.overlay.addEventListener('click', (e) => {
+            if (this.dscDrawing) return;          // that click is drawing a signature box
             if (e.target === this.view.overlay) this.place(e);
         });
         $('sign-clear').addEventListener('click', () => { this.items = []; this.drawItems(); });
@@ -1821,6 +1905,10 @@ const SignTool = {
                     </div>`).join('')
                 : '<p class="muted">No fillable fields detected.</p>';
         });
+        // A quiet look once a document is open, so a plugged-in token is
+        // already listed by the time anyone reaches the panel. Nobody who
+        // never signs is bothered with it.
+        if (!this.tokenLookedFor) { this.tokenLookedFor = true; this.findToken(false); }
     },
 
     place(e) {
@@ -2021,6 +2109,138 @@ const SignTool = {
         $('dsc-visible').addEventListener('change', (e) => {
             $('dsc-place').classList.toggle('hidden', !e.target.checked);
         });
+
+        this.dscMode = 'token';
+        $$('[data-dscmode]').forEach((btn) => btn.addEventListener('click', () => {
+            this.dscMode = btn.dataset.dscmode;
+            $$('[data-dscmode]').forEach((b) => b.classList.toggle('active', b === btn));
+            $$('[data-dscpanel]').forEach((p) =>
+                p.classList.toggle('hidden', p.dataset.dscpanel !== this.dscMode));
+        }));
+        $('dsc-token-refresh').addEventListener('click', () => this.findToken(true));
+        $('dsc-draw').addEventListener('click', () => this.drawSignatureBox());
+    },
+
+    /** Look for the helper and list what is on the token. Silent on the
+     *  first pass: not having a token is the common case. */
+    async findToken(loud) {
+        const status = $('dsc-token-status');
+        const group = $('dsc-cert-group');
+        const select = $('dsc-cert');
+        this.tokenCerts = null;
+        if (loud) status.textContent = 'Looking for a signing token…';
+
+        const info = await Signer.probe();
+        if (!info) {
+            group.classList.add('hidden');
+            status.innerHTML = '<span class="warn">No signing helper is running on this computer.</span> ' +
+                               'Start MiyeePDF Signer, plug the token in, then press Look again. ' +
+                               'Or switch to <em>Certificate file</em> above if your DSC is a .p12 file.';
+            return null;
+        }
+        if (!info.tokens || !info.tokens.length) {
+            group.classList.add('hidden');
+            status.innerHTML = '<span class="warn">The helper is running but no token is plugged in.</span> ' +
+                               'Insert the USB token and press Look again.';
+            return null;
+        }
+
+        try {
+            const found = await Signer.certificates();
+            const certs = (found.certificates || []).filter((c) => !c.expired);
+            const expired = (found.certificates || []).length - certs.length;
+            if (!certs.length) {
+                group.classList.add('hidden');
+                status.innerHTML = expired
+                    ? '<span class="warn">The only certificates on this token have expired.</span>'
+                    : '<span class="warn">No signing certificate was found on the token.</span>';
+                return null;
+            }
+            this.tokenCerts = certs;
+            select.innerHTML = certs.map((c, i) =>
+                `<option value="${i}">${escapeText(c.subject || 'Certificate')} — expires ` +
+                `${(c.notAfter || '').slice(0, 10)}</option>`).join('');
+            group.classList.remove('hidden');
+            // Name the token the certificate actually came from: a reader
+            // can show several slots, and only one of them holds the DSC.
+            const token = info.tokens.find((t) => t.slot === certs[0].slot) ||
+                          info.tokens.find((t) => t.label) || info.tokens[0] || {};
+            status.innerHTML = `Token <strong>${escapeText(token.label || 'DSC token')}</strong> is ready` +
+                               (expired ? ` (${expired} expired certificate${expired > 1 ? 's' : ''} hidden).` : '.');
+            return certs;
+        } catch (err) {
+            group.classList.add('hidden');
+            status.innerHTML = `<span class="warn">Could not read the token: ${escapeText(UI.explain(err))}</span>`;
+            return null;
+        }
+    },
+
+    /** Drag a rectangle on the page and sign inside it, the way Acrobat
+     *  does. The box is kept as fractions of the page, so it lands in the
+     *  same place whatever the paper size. */
+    drawSignatureBox() {
+        const overlay = this.view && this.view.overlay;
+        if (!this.view || !this.view.info) return UI.toast('Open a PDF first', 'error');
+        const note = $('dsc-area-note');
+        this.dscDrawing = true;
+        overlay.classList.add('overlay--picking');
+        note.innerHTML = '<strong>Drag a box on the page</strong> where the signature should go.';
+
+        const rectEl = document.createElement('div');
+        rectEl.className = 'draw-box';
+        let start = null;
+
+        const finish = () => {
+            overlay.classList.remove('overlay--picking');
+            rectEl.remove();
+            overlay.removeEventListener('mousedown', down);
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+            window.removeEventListener('keydown', cancel);
+            // The click that ends the drag is dispatched after mouseup, and
+            // would otherwise land on the page as a place-a-signature click.
+            // Staying "drawing" until the next task swallows it.
+            setTimeout(() => { this.dscDrawing = false; }, 0);
+        };
+        const cancel = (e) => {
+            if (e.key !== 'Escape') return;
+            finish();
+            note.textContent = 'Nothing placed. Drag a box on the page, or pick a corner above.';
+        };
+        const paint = (a, b) => {
+            const x0 = Math.min(a.x, b.x); const y0 = Math.min(a.y, b.y);
+            rectEl.style.cssText = `left:${x0 * 100}%;top:${y0 * 100}%;` +
+                `width:${Math.abs(b.x - a.x) * 100}%;height:${Math.abs(b.y - a.y) * 100}%`;
+        };
+        const down = (e) => {
+            e.preventDefault();
+            start = this.view.fracFromEvent(e);
+            overlay.appendChild(rectEl);
+            paint(start, start);
+        };
+        const move = (e) => { if (start) paint(start, this.view.fracFromEvent(e)); };
+        const up = (e) => {
+            if (!start) return;
+            const end = this.view.fracFromEvent(e);
+            const box = {
+                page: this.view.page,
+                x0: Math.min(start.x, end.x), y0: Math.min(start.y, end.y),
+                x1: Math.max(start.x, end.x), y1: Math.max(start.y, end.y),
+            };
+            finish();
+            if (box.x1 - box.x0 < 0.03 || box.y1 - box.y0 < 0.015) {
+                note.textContent = 'That box was too small - try dragging a larger one.';
+                return;
+            }
+            this.dscBox = box;
+            $('dsc-corner').querySelector('[value="drawn"]').disabled = false;
+            $('dsc-corner').value = 'drawn';
+            note.innerHTML = `Signature area set on page ${box.page + 1}. Drag again to move it.`;
+        };
+        overlay.addEventListener('mousedown', down);
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+        window.addEventListener('keydown', cancel);
     },
 
     /** Open the certificate so the signer can be named before signing, and
@@ -2062,10 +2282,21 @@ const SignTool = {
 
     async signDigitally() {
         if (!this.view.info) return UI.toast('Open a PDF first', 'error');
-        if (!this.dsc) {
+        const useToken = this.dscMode !== 'file';
+        let cert = null;
+        if (useToken) {
+            if (!this.tokenCerts) {
+                if (!await this.findToken(true)) {
+                    return UI.toast('No signing token found - see the panel for what to do', 'error');
+                }
+            }
+            cert = this.tokenCerts[Number($('dsc-cert').value) || 0];
+            if (!cert) return UI.toast('Choose a certificate on the token', 'error');
+        } else if (!this.dsc) {
             await this.readCertificate();
             if (!this.dsc) return UI.toast('Choose a certificate file and its password first', 'error');
         }
+
         const visible = $('dsc-visible').checked;
         // Fractions of the page, so the box lands in the same place whatever
         // the paper size.
@@ -2075,43 +2306,72 @@ const SignTool = {
             bl: { x0: 0.06, y0: 0.84, x1: 0.44, y1: 0.94 },
             br: { x0: 0.56, y0: 0.84, x1: 0.94, y1: 0.94 },
         };
-        const box = corners[$('dsc-corner').value] || corners.bl;
+        const where = $('dsc-corner').value;
+        const box = where === 'drawn' && this.dscBox ? this.dscBox : (corners[where] || corners.bl);
+        const page = box.page === undefined ? this.view.page : box.page;
 
-        await UI.run('Signing…', async () => {
-            const cn = (this.dsc.signer.subject.getField('CN') || {}).value || '';
-            await engine.callJSON('prepare_signature', 'sign', this.view.page,
+        const cn = useToken
+            ? (cert.subject || '')
+            : ((this.dsc.signer.subject.getField('CN') || {}).value || '');
+
+        await UI.run(useToken ? 'Waiting for the token…' : 'Signing…', async () => {
+            await engine.callJSON('prepare_signature', 'sign', page,
                                   box.x0, box.y0, box.x1, box.y1,
                                   cn, $('dsc-reason').value, $('dsc-location').value, '', visible);
             let signed;
+            let signedBy = cn;
             try {
                 const payload = await engine.call('signature_payload', 'sign');
-                const p7 = forge.pkcs7.createSignedData();
-                p7.content = forge.util.createBuffer(bytesToBinary(payload));
-                this.dsc.certs.forEach((c) => p7.addCertificate(c));
-                p7.addSigner({
-                    key: this.dsc.key,
-                    certificate: this.dsc.signer,
-                    digestAlgorithm: forge.pki.oids.sha256,
-                    authenticatedAttributes: [
-                        { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
-                        { type: forge.pki.oids.messageDigest },
-                        { type: forge.pki.oids.signingTime, value: new Date() },
-                    ],
-                });
-                // Detached: the signature covers the document's bytes without
-                // carrying a copy of them.
-                p7.sign({ detached: true });
-                const der = forge.asn1.toDer(p7.toAsn1()).getBytes();
-                signed = await engine.call('finish_signature', 'sign', forge.util.bytesToHex(der));
+                let der;
+                if (useToken) {
+                    // Only the hash goes to the helper. The document does not
+                    // leave this page, and the PIN is never typed into it.
+                    const digest = new Uint8Array(
+                        await crypto.subtle.digest('SHA-256', payload));
+                    UI.busy('Enter the token PIN in the helper window…');
+                    const res = await Signer.sign({
+                        slot: cert.slot,
+                        certId: cert.id,
+                        digest: bytesToB64(digest),
+                        digestAlgo: 'sha256',
+                        document: (this.view.file && this.view.file.name) || 'this document',
+                    });
+                    der = bytesToHex(b64ToBytes(res.cms));
+                    signedBy = res.signedBy || cn;
+                } else {
+                    const p7 = forge.pkcs7.createSignedData();
+                    p7.content = forge.util.createBuffer(bytesToBinary(payload));
+                    this.dsc.certs.forEach((c) => p7.addCertificate(c));
+                    p7.addSigner({
+                        key: this.dsc.key,
+                        certificate: this.dsc.signer,
+                        digestAlgorithm: forge.pki.oids.sha256,
+                        authenticatedAttributes: [
+                            { type: forge.pki.oids.contentType, value: forge.pki.oids.data },
+                            { type: forge.pki.oids.messageDigest },
+                            { type: forge.pki.oids.signingTime, value: new Date() },
+                        ],
+                    });
+                    // Detached: the signature covers the document's bytes without
+                    // carrying a copy of them.
+                    p7.sign({ detached: true });
+                    der = forge.util.bytesToHex(forge.asn1.toDer(p7.toAsn1()).getBytes());
+                }
+                signed = await engine.call('finish_signature', 'sign', der);
             } catch (err) {
                 await engine.call('cancel_signature', 'sign');
+                if (err && err.code === 'CANCELLED') {
+                    UI.toast('Signing was cancelled at the helper', 'error');
+                    return;
+                }
                 throw err;
             }
             download(signed, 'signed-digitally.pdf');
             const res = $('dsc-result');
             res.classList.remove('hidden');
-            res.innerHTML = `Signed and saved. The file is sealed as it stands now: any later change ` +
-                            `to it will show up as a broken signature in a reader.`;
+            res.innerHTML = `Signed as <strong>${escapeText(signedBy)}</strong> and saved. The file is sealed ` +
+                            `as it stands now: any later change to it will show up as a broken signature ` +
+                            `in a reader.`;
             UI.toast('Digitally signed', 'success');
         });
     },

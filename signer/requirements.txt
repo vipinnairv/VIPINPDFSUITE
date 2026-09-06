@@ -1,0 +1,4 @@
+# Everything MiyeePDF Signer needs beyond the Python standard library.
+PyKCS11>=1.5.12        # talks to the token's PKCS#11 driver
+asn1crypto>=1.5.1      # builds the CMS signature
+cryptography>=41.0      # reads the certificate on the token
