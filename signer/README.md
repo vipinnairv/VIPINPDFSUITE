@@ -50,6 +50,10 @@ On Windows a ready-made `MiyeePDFSigner.exe` can be built with
    **Sign digitally & save**.
 5. The helper asks whether to sign that document, and for the token PIN.
 
+MiyeePDF does not go looking for the helper until you press *Look again* that
+first time. From then on it checks by itself whenever you open a document, so
+the token is already listed by the time you reach the panel.
+
 ## If it cannot find your token
 
 The helper looks for the usual drivers by itself. If yours is somewhere else,
@@ -98,9 +102,9 @@ not everywhere:
 
 | Browser | Works |
 |---|---|
-| Chrome, Edge, Brave and other Chromium browsers | yes |
-| Firefox | yes |
-| Safari | no — it blocks a page from reaching `127.0.0.1` |
+| Chrome, Edge, Brave and other Chromium browsers | yes, tested |
+| Firefox | expected to work — it treats loopback as trustworthy too, but this has not been tested |
+| Safari | no — it does not let a page reach `127.0.0.1` |
 
 On Safari, use the **Certificate file** tab instead.
 

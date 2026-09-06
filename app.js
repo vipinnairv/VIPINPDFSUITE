@@ -1905,10 +1905,14 @@ const SignTool = {
                     </div>`).join('')
                 : '<p class="muted">No fillable fields detected.</p>';
         });
-        // A quiet look once a document is open, so a plugged-in token is
-        // already listed by the time anyone reaches the panel. Nobody who
-        // never signs is bothered with it.
-        if (!this.tokenLookedFor) { this.tokenLookedFor = true; this.findToken(false); }
+        // Only look for the helper if a token has been used here before.
+        // Feature-detecting it means a request that fails, and there is no
+        // reason to make it - or to put its error in the console - for
+        // everyone who never signs with a token.
+        if (!this.tokenLookedFor && SignTool.tokenUsedBefore()) {
+            this.tokenLookedFor = true;
+            this.findToken(false);
+        }
     },
 
     place(e) {
@@ -2111,18 +2115,31 @@ const SignTool = {
         });
 
         this.dscMode = 'token';
-        $$('[data-dscmode]').forEach((btn) => btn.addEventListener('click', () => {
-            this.dscMode = btn.dataset.dscmode;
-            $$('[data-dscmode]').forEach((b) => b.classList.toggle('active', b === btn));
-            $$('[data-dscpanel]').forEach((p) =>
-                p.classList.toggle('hidden', p.dataset.dscpanel !== this.dscMode));
-        }));
+        $$('[data-dscmode]').forEach((btn) =>
+            btn.addEventListener('click', () => this.showDscMode(btn.dataset.dscmode)));
         $('dsc-token-refresh').addEventListener('click', () => this.findToken(true));
         $('dsc-draw').addEventListener('click', () => this.drawSignatureBox());
     },
 
-    /** Look for the helper and list what is on the token. Silent on the
-     *  first pass: not having a token is the common case. */
+    /** Has a token ever been found on this device? Kept so the helper is
+     *  looked for automatically from then on, and not before. */
+    tokenUsedBefore() {
+        try { return localStorage.getItem('miyee.dscToken') === '1'; } catch (err) { return false; }
+    },
+
+    rememberToken() {
+        try { localStorage.setItem('miyee.dscToken', '1'); } catch (err) { /* private mode */ }
+    },
+
+    showDscMode(mode) {
+        this.dscMode = mode;
+        $$('[data-dscmode]').forEach((b) => b.classList.toggle('active', b.dataset.dscmode === mode));
+        $$('[data-dscpanel]').forEach((p) => p.classList.toggle('hidden', p.dataset.dscpanel !== mode));
+    },
+
+    /** Look for the helper and list what is on the token.
+     *  @param loud true when a person asked; false for the automatic look
+     *         that only happens once a token has been used here before. */
     async findToken(loud) {
         const status = $('dsc-token-status');
         const group = $('dsc-cert-group');
@@ -2135,7 +2152,7 @@ const SignTool = {
             group.classList.add('hidden');
             status.innerHTML = '<span class="warn">No signing helper is running on this computer.</span> ' +
                                'Start MiyeePDF Signer, plug the token in, then press Look again. ' +
-                               'Or switch to <em>Certificate file</em> above if your DSC is a .p12 file.';
+                               'Or use <em>Certificate file</em> above if your DSC is a .p12 file.';
             return null;
         }
         if (!info.tokens || !info.tokens.length) {
@@ -2165,6 +2182,7 @@ const SignTool = {
             // can show several slots, and only one of them holds the DSC.
             const token = info.tokens.find((t) => t.slot === certs[0].slot) ||
                           info.tokens.find((t) => t.label) || info.tokens[0] || {};
+            SignTool.rememberToken();
             status.innerHTML = `Token <strong>${escapeText(token.label || 'DSC token')}</strong> is ready` +
                                (expired ? ` (${expired} expired certificate${expired > 1 ? 's' : ''} hidden).` : '.');
             return certs;
