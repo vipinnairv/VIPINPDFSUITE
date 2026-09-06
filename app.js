@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.24.0';
+const APP_VERSION = '4.25.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -161,7 +161,11 @@ class PyEngine {
         let retry = false;
         for (;;) {
             try {
-                return await this.callJSON('open_doc', docId, bytes, password);
+                const info = await this.callJSON('open_doc', docId, bytes, password);
+                // Kept only in memory, for the length of a batch, so the same
+                // password is not asked for twenty times over.
+                this.lastPassword = password;
+                return info;
             } catch (err) {
                 if (!String(err.message || err).includes('PASSWORD_REQUIRED')) throw err;
                 password = await UI.askPassword(fileName, retry);
@@ -2420,15 +2424,29 @@ function batchReport(key, html) {
     box.innerHTML = html;
 }
 
-async function runBatch({ files, docId, suffix, apply, report = () => {} }) {
+async function runBatch({ files, docId, suffix, apply, report = () => {}, sharedPassword = false }) {
     const zip = new JSZip();
     const failed = [];
     let done = 0;
+    // A password that opened one file usually opens the rest of the batch;
+    // asking for the same one twenty times is the chore, not the unlocking.
+    let known = '';
 
     for (const file of files) {
         report(`Processing <strong>${file.name}</strong> (${done + 1} of ${files.length})…`);
         try {
-            const info = await engine.openDoc(docId, await fileToBytes(file), file.name);
+            let info;
+            if (sharedPassword && known) {
+                try {
+                    info = await engine.callJSON('open_doc', docId, await fileToBytes(file), known);
+                } catch {
+                    info = null;          // this one differs; fall through and ask
+                }
+            }
+            if (!info) {
+                info = await engine.openDoc(docId, await fileToBytes(file), file.name);
+                if (sharedPassword) known = engine.lastPassword || known;
+            }
             const bytes = await apply(info, file);
             const base = file.name.replace(/\.pdf$/i, '');
             zip.file(`${base}-${suffix}.pdf`, bytes);
@@ -2800,6 +2818,17 @@ const ProtectTool = {
     },
 
     async decrypt() {
+        if (this.files && this.files.length > 1) {
+            // A folder of statements from the same bank shares one password,
+            // and unlocking them one at a time is the chore this removes.
+            // Each is asked for separately only if that one does not open.
+            return UI.run('Removing protection…', () => runBatch({
+                files: this.files, docId: 'protect', suffix: 'unlocked',
+                apply: () => engine.call('decrypt', 'protect'),
+                report: (html) => batchReport('protect', html),
+                sharedPassword: true,
+            }));
+        }
         await UI.run('Removing protection…', async () => {
             const bytes = await engine.call('decrypt', 'protect');
             download(bytes, 'unlocked.pdf');
