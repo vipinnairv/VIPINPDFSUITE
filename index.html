@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.24.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.24.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.24.0">
-    <link rel="manifest" href="site.webmanifest?v=4.24.0">
+    <link rel="icon" href="favicon.svg?v=4.25.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.25.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.25.0">
+    <link rel="manifest" href="site.webmanifest?v=4.25.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.24.0">
+    <link rel="stylesheet" href="style.css?v=4.25.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -32,7 +32,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.24.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.25.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -701,6 +701,9 @@
                     <button class="btn btn--primary" id="protect-run">🔒 Encrypt PDF</button>
                     <button class="btn btn--outline" id="protect-remove">🔓 Remove Password</button>
                 </div>
+                <p class="hint hint--inline">Removing a password needs the password: you are asked for it when the file is opened. Several files at once share the first one that works, and only a file it does not open asks again. This also lifts owner restrictions - the kind that let a bank statement open freely but block copying or printing.</p>
+                <div class="action-buttons" hidden>
+                </div>
             </div>
         </div>
 
@@ -1157,6 +1160,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.24.0"></script>
+    <script src="app.js?v=4.25.0"></script>
 </body>
 </html>
