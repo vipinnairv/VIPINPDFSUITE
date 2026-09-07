@@ -2134,3 +2134,31 @@ body {
    workspace, so it can be set before the files are chosen. */
 .panel--tight { padding: var(--space-16); margin-bottom: var(--space-16); }
 .panel--tight .side-subtitle { margin-top: 0; }
+
+/* ---- pictures into a document ------------------------------------- */
+.photo-card { position: relative; }
+.photo-card img {
+    width: 100%;
+    height: 130px;
+    object-fit: contain;
+    background: var(--color-secondary);
+    border-radius: var(--radius-sm);
+}
+.photo-card__size {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-secondary);
+    text-align: center;
+}
+.page-card.dragging { opacity: 0.4; }
+
+/* ---- a trimmed page, in the Pages grid ----------------------------- */
+.page-card--trimmed { box-shadow: inset 0 0 0 2px var(--color-primary); }
+.page-card__tag {
+    display: inline-block;
+    margin-left: var(--space-4);
+    padding: 0 var(--space-4);
+    border-radius: var(--radius-sm);
+    background: var(--color-primary);
+    color: var(--color-btn-primary-text, #fff);
+    font-size: var(--font-size-xs);
+}

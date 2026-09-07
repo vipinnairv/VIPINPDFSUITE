@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.27.0';
+const APP_VERSION = '4.28.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1675,6 +1675,10 @@ const EditTool = {
 const PagesTool = {
     order: [],
     rotations: {},
+    /* Where each page is to be cropped, as fractions of the page. Held here
+     * with the order and the rotations rather than written into the document,
+     * so Trim is undoable and costs nothing until Save. */
+    crops: {},
     selected: new Set(),
     past: [],
     futures: [],
@@ -1688,7 +1692,8 @@ const PagesTool = {
 
     /** Record the arrangement before changing it. */
     snap() {
-        this.past.push({ order: [...this.order], rotations: { ...this.rotations } });
+        this.past.push({ order: [...this.order], rotations: { ...this.rotations },
+                         crops: { ...this.crops } });
         if (this.past.length > this.STEPS) this.past.shift();
         this.futures = [];
         Dirty.touch('pages');
@@ -1700,16 +1705,55 @@ const PagesTool = {
         $('pages-redo').disabled = !this.futures.length;
     },
 
+    /** Cut the blank margins off, measured from the page rather than guessed.
+     *
+     * Trimming sets the crop box, which is what a reader shows and a printer
+     * prints - the content outside it is still in the file. That makes this a
+     * tidying tool and emphatically not a way to remove anything: Redact is
+     * for that, and says so.
+     */
+    async trim() {
+        const targets = this.selected.size ? [...this.selected] : [...this.order];
+        if (!targets.length) return UI.toast('No pages to trim', 'error');
+        await UI.run(`Measuring ${targets.length} page${targets.length > 1 ? 's' : ''}…`, async () => {
+            const found = await engine.callJSON('content_bounds', 'pages', JSON.stringify(targets));
+            const bounds = found.bounds || {};
+            const useful = [];
+            Object.keys(bounds).forEach((key) => {
+                const box = bounds[key];
+                if (!box) return;
+                // A page already tight to its content is left alone rather
+                // than nudged by a rounding error.
+                const saved = (1 - (box.x1 - box.x0)) + (1 - (box.y1 - box.y0));
+                if (saved > 0.02) useful.push([key, box]);
+            });
+            if (!useful.length) {
+                return UI.toast(found.blank === found.measured
+                    ? 'Those pages are blank - nothing to trim'
+                    : 'These pages have no margins worth trimming', 'error');
+            }
+            this.snap();
+            useful.forEach(([key, box]) => { this.crops[key] = box; });
+            $('pages-untrim').classList.remove('hidden');
+            await this.renderGrid();
+            const blank = found.blank ? `, ${found.blank} blank page${found.blank > 1 ? 's' : ''} left alone` : '';
+            UI.toast(`Trimmed ${useful.length} page${useful.length > 1 ? 's' : ''}${blank}`, 'success');
+        });
+    },
+
     async step(direction) {
         const from = direction === 'undo' ? this.past : this.futures;
         const to = direction === 'undo' ? this.futures : this.past;
         if (!from.length) {
             return UI.toast(direction === 'undo' ? 'Nothing left to undo' : 'Nothing to redo', 'error');
         }
-        to.push({ order: [...this.order], rotations: { ...this.rotations } });
+        to.push({ order: [...this.order], rotations: { ...this.rotations },
+                  crops: { ...this.crops } });
         const state = from.pop();
         this.order = state.order;
         this.rotations = state.rotations;
+        this.crops = state.crops || {};
+        $('pages-untrim').classList.toggle('hidden', !Object.keys(this.crops).length);
         // A page brought back by an undo cannot stay selected as if it had
         // never left, so the selection starts clean after a step.
         this.selected.clear();
@@ -1733,6 +1777,13 @@ const PagesTool = {
         $('pages-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('pages-rotate-left').addEventListener('click', () => this.rotate(-90));
         $('pages-rotate-right').addEventListener('click', () => this.rotate(90));
+        $('pages-trim').addEventListener('click', () => this.trim());
+        $('pages-untrim').addEventListener('click', () => {
+            this.snap();
+            this.crops = {};
+            this.renderGrid();
+            $('pages-untrim').classList.add('hidden');
+        });
         $('pages-delete').addEventListener('click', () => this.remove());
         $('pages-select-all').addEventListener('click', () => this.selectAll(true));
         $('pages-deselect').addEventListener('click', () => this.selectAll(false));
@@ -1796,6 +1847,8 @@ const PagesTool = {
             const info = await engine.callJSON('doc_info', 'pages');
             this.order = Array.from({ length: info.pages }, (_, i) => i);
             this.rotations = {};
+            this.crops = {};
+            $('pages-untrim').classList.add('hidden');
             this.selected.clear();
             this.past = [];
             this.futures = [];
@@ -1814,11 +1867,13 @@ const PagesTool = {
             const png = await engine.call('render_page', 'pages', original, 36);
             const url = URL.createObjectURL(new Blob([png], { type: 'image/png' }));
             const card = document.createElement('div');
-            card.className = 'page-card' + (this.selected.has(original) ? ' selected' : '');
+            card.className = 'page-card' + (this.selected.has(original) ? ' selected' : '')
+                            + (this.crops[original] ? ' page-card--trimmed' : '');
             card.draggable = true;
             card.dataset.original = original;
             card.innerHTML = `<img src="${url}" style="transform:rotate(${this.rotations[original] || 0}deg)">
-                              <div class="page-card__label">Page ${original + 1}</div>`;
+                              <div class="page-card__label">Page ${original + 1}${
+                                  this.crops[original] ? ' <span class="page-card__tag">trimmed</span>' : ''}</div>`;
             card.addEventListener('click', () => {
                 if (this.selected.has(original)) this.selected.delete(original);
                 else this.selected.add(original);
@@ -1866,7 +1921,8 @@ const PagesTool = {
         if (!this.order.length) return UI.toast('No pages left to save', 'error');
         await UI.run('Building PDF…', async () => {
             const bytes = await engine.call('organize', 'pages',
-                                            JSON.stringify(this.order), JSON.stringify(this.rotations));
+                                            JSON.stringify(this.order), JSON.stringify(this.rotations),
+                                            JSON.stringify(this.crops));
             const mode = $('pages-split-mode').value;
             if (!mode) { download(bytes, 'organized.pdf'); Dirty.clear('pages'); return; }
 
@@ -4080,6 +4136,149 @@ function overallVerdict(reports) {
         : `All ${reports.length} signatures match, and not a byte has changed since.` };
 }
 
+/* ------------------------------------------------------------------ */
+/* Pictures into a document                                            */
+/* ------------------------------------------------------------------ */
+
+/* A phone photograph of an A4 sheet is twelve megapixels of paper. Putting
+ * that in a PDF whole makes a file nobody can email, so the picture is
+ * decoded, turned the right way up from what the camera recorded, and
+ * scaled down here in the browser - where the work is native and fast -
+ * before the engine ever sees it. */
+const PHOTO_LONG_EDGE = 2200;
+const PHOTO_QUALITY = 0.86;
+
+const PhotoTool = {
+    shots: [],
+
+    init() {
+        $('photos-file').addEventListener('change', (e) => this.add(Array.from(e.target.files)));
+        $('photos-build').addEventListener('click', () => this.build());
+        $('photos-clear').addEventListener('click', () => {
+            this.shots = [];
+            this.draw();
+            $('photos-result').classList.add('hidden');
+        });
+    },
+
+    async add(files) {
+        const pictures = files.filter((f) => /^image\//.test(f.type) || /\.(jpe?g|png|webp|gif|bmp)$/i.test(f.name));
+        if (!pictures.length) {
+            return UI.toast('Those do not look like pictures', 'error');
+        }
+        $('photos-workspace').classList.remove('hidden');
+        const refused = [];
+        await UI.run('Reading pictures…', async () => {
+            for (const file of pictures) {
+                try {
+                    this.shots.push(await this.prepare(file));
+                } catch (err) {
+                    refused.push(file.name);
+                }
+            }
+        });
+        this.draw();
+        if (refused.length) {
+            UI.toast(`Could not read ${refused.length === 1 ? refused[0] : `${refused.length} pictures`}` +
+                     ' - a browser cannot open every camera format, HEIC among them', 'error');
+        }
+    },
+
+    /** Decode, straighten and shrink one picture, and keep a preview of it. */
+    async prepare(file) {
+        // imageOrientation honours the camera's own rotation flag; without it
+        // a photograph taken sideways goes into the PDF sideways.
+        const bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+        const scale = Math.min(1, PHOTO_LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+        const width = Math.max(1, Math.round(bitmap.width * scale));
+        const height = Math.max(1, Math.round(bitmap.height * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+        bitmap.close();
+        const blob = await new Promise((done) => canvas.toBlob(done, 'image/jpeg', PHOTO_QUALITY));
+        if (!blob) throw new Error('This picture could not be re-encoded');
+        return {
+            name: file.name,
+            bytes: new Uint8Array(await blob.arrayBuffer()),
+            preview: canvas.toDataURL('image/jpeg', 0.5),
+            width, height,
+            was: file.size, now: blob.size,
+        };
+    },
+
+    draw() {
+        const grid = $('photos-grid');
+        grid.innerHTML = '';
+        if (!this.shots.length) {
+            grid.innerHTML = '<p class="muted">No pictures chosen yet.</p>';
+            return;
+        }
+        this.shots.forEach((shot, index) => {
+            const card = document.createElement('div');
+            card.className = 'page-card photo-card';
+            card.draggable = true;
+            card.innerHTML = `<img src="${shot.preview}" alt="">
+                <div class="page-card__label">${index + 1}. ${escapeText(shot.name)}</div>
+                <div class="photo-card__size">${shot.width}×${shot.height} · ${formatSize(shot.now)}</div>`;
+
+            const drop = document.createElement('button');
+            drop.className = 'placed-item__del';
+            drop.textContent = '✕';
+            drop.title = 'Leave this one out';
+            drop.addEventListener('click', () => {
+                this.shots.splice(index, 1);
+                this.draw();
+            });
+            card.appendChild(drop);
+
+            card.addEventListener('dragstart', (e) => {
+                e.dataTransfer.setData('text/plain', String(index));
+                card.classList.add('dragging');
+            });
+            card.addEventListener('dragend', () => card.classList.remove('dragging'));
+            card.addEventListener('dragover', (e) => e.preventDefault());
+            card.addEventListener('drop', (e) => {
+                e.preventDefault();
+                const from = Number(e.dataTransfer.getData('text/plain'));
+                if (Number.isNaN(from) || from === index) return;
+                const [moved] = this.shots.splice(from, 1);
+                this.shots.splice(index, 0, moved);
+                this.draw();
+            });
+            grid.appendChild(card);
+        });
+    },
+
+    async build() {
+        if (!this.shots.length) return UI.toast('Choose some pictures first', 'error');
+        await UI.run('Building the PDF…', async () => {
+            await engine.call('start_image_pdf', 'photos');
+            try {
+                for (const shot of this.shots) {
+                    await engine.call('add_image_page', 'photos', shot.bytes, shot.name);
+                }
+                const pdf = await engine.call('finish_image_pdf', 'photos',
+                                              $('photos-paper').value,
+                                              Number($('photos-margin').value) || 0);
+                download(pdf, 'photos.pdf');
+                const before = this.shots.reduce((sum, s) => sum + s.was, 0);
+                const box = $('photos-result');
+                box.classList.remove('hidden');
+                box.innerHTML = `${this.shots.length} picture${this.shots.length > 1 ? 's' : ''} ` +
+                    `into a ${formatSize(pdf.length)} PDF, from ${formatSize(before)} of originals. ` +
+                    `The text in them is a picture, not text - run <strong>OCR</strong> on it if you ` +
+                    `need to search or copy from it.`;
+                UI.toast('PDF ready', 'success');
+            } catch (err) {
+                await engine.call('cancel_image_pdf', 'photos');
+                throw err;
+            }
+        });
+    },
+};
+
 const VerifyTool = {
     init() {
         $('verify-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
@@ -4182,6 +4381,7 @@ const InspectTool = {
     init() {
         $('inspect-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
         $('inspect-clean').addEventListener('click', () => this.clean());
+        $('inspect-attachments').addEventListener('click', () => this.saveAttachments());
     },
 
     async open(files) {
@@ -4219,6 +4419,33 @@ const InspectTool = {
                         <span class="finding__detail">${String(f.detail).replace(/[<>]/g, '')}</span>
                     </div>`).join('')
                 : '<div class="result-box">Nothing hidden was found - this document is clean.</div>';
+
+            // Only offered when there is something to get out.
+            const attached = /(\d+)\s+attached file/i.exec(
+                res.findings.filter((f) => /embedded file/i.test(f.area))
+                            .map((f) => f.detail).join(' '));
+            $('inspect-attachments').classList.toggle('hidden', !attached);
+            if (attached) {
+                $('inspect-attachments').textContent =
+                    `📎 Save the ${attached[1]} attached file${Number(attached[1]) > 1 ? 's' : ''}`;
+            }
+        });
+    },
+
+    /** Being told a document carries three attachments, with no way to read
+     *  them, is half an answer. */
+    async saveAttachments() {
+        await UI.run('Reading the attached files…', async () => {
+            const files = await engine.callJSON('extract_attachments', 'inspect');
+            if (!files.length) return UI.toast('There is nothing attached to this one', 'error');
+            if (files.length === 1) {
+                download(b64ToBytes(files[0].b64), files[0].name);
+            } else {
+                const zip = new JSZip();
+                files.forEach((f) => zip.file(f.name, b64ToBytes(f.b64)));
+                download(await zip.generateAsync({ type: 'blob' }), 'attachments.zip', 'application/zip');
+            }
+            UI.toast(`Saved ${files.length} attached file${files.length > 1 ? 's' : ''}`, 'success');
         });
     },
 
@@ -4430,6 +4657,8 @@ const TOOL_CARDS = [
     { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Password Protect',
       blurb: 'AES-256 encryption with per-permission control.' },
 
+    { group: 'Convert', tab: 'photos', icon: '📷', name: 'Photos to PDF',
+      blurb: 'Pictures of paper into one document - straightened and sized down.', badge: 'New' },
     { group: 'Convert', tab: 'ocr', icon: '🔍', name: 'OCR',
       blurb: 'Turn a scan into a genuinely searchable, selectable document.' },
     { group: 'Convert', tab: 'export', icon: '📤', name: 'Export',
@@ -4471,7 +4700,8 @@ const Dashboard = {
 
 const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
                CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool,
-               ScanTool, InspectTool, VerifyTool, ReplaceTool, AutoSplitTool, Dashboard];
+               ScanTool, InspectTool, VerifyTool, PhotoTool, ReplaceTool,
+               AutoSplitTool, Dashboard];
 
 // Start fetching the engine immediately - this file is loaded at the end of
 // <body>, so the download overlaps with DOM construction instead of queueing

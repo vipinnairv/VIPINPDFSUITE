@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.27.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.27.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.27.0">
-    <link rel="manifest" href="site.webmanifest?v=4.27.0">
+    <link rel="icon" href="favicon.svg?v=4.28.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.28.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.28.0">
+    <link rel="manifest" href="site.webmanifest?v=4.28.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.27.0">
+    <link rel="stylesheet" href="style.css?v=4.28.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -32,7 +32,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.27.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.28.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -58,6 +58,7 @@
             <button class="tab-btn" data-tab="scan" role="tab" aria-selected="false" aria-controls="scan-tab">🛡️ Find Sensitive Data</button>
             <button class="tab-btn" data-tab="inspect" role="tab" aria-selected="false" aria-controls="inspect-tab">🕵️ Inspect</button>
             <button class="tab-btn" data-tab="verify" role="tab" aria-selected="false" aria-controls="verify-tab">🔎 Verify Signature</button>
+            <button class="tab-btn" data-tab="photos" role="tab" aria-selected="false" aria-controls="photos-tab">📷 Photos to PDF</button>
             <button class="tab-btn" data-tab="replace" role="tab" aria-selected="false" aria-controls="replace-tab">🔁 Find &amp; Replace</button>
             <button class="tab-btn" data-tab="autosplit" role="tab" aria-selected="false" aria-controls="autosplit-tab">✂️ Auto-Split</button>
             <button class="tab-btn" data-tab="export" role="tab" aria-selected="false" aria-controls="export-tab">📤 Export</button>
@@ -304,6 +305,8 @@
                         <button class="btn btn--sm" id="pages-rotate-left">↺ Rotate Left</button>
                         <button class="btn btn--sm" id="pages-rotate-right">↻ Rotate Right</button>
                         <button class="btn btn--sm" id="pages-delete">🗑️ Delete</button>
+                        <button class="btn btn--sm" id="pages-trim" title="Cut the blank margins off">✂️ Trim margins</button>
+                        <button class="btn btn--sm hidden" id="pages-untrim">↺ Undo trim</button>
                     </div>
                     <div class="tool-group">
                         <button class="btn btn--sm" id="pages-select-all">Select All</button>
@@ -929,8 +932,49 @@
                 </div>
                 <div class="action-buttons">
                     <button class="btn btn--primary" id="inspect-clean">🧹 Sanitize &amp; save</button>
+                    <button class="btn btn--secondary hidden" id="inspect-attachments">📎 Save the attached files</button>
                 </div>
                 <div id="inspect-result" class="result-box hidden"></div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="photos-tab" role="tabpanel" tabindex="0">
+            <div class="tool-header">
+                <h2>Photos to PDF</h2>
+                <p>Pictures of paper - a phone standing in for a scanner, or what a client sent on WhatsApp - into one document, in the order you put them</p>
+            </div>
+            <div class="file-drop-zone" data-drop="photos" role="button" tabindex="0" aria-label="Choose pictures, or drop them here">
+                <p>Drop pictures here, or click to select</p>
+                <input type="file" id="photos-file" accept="image/*" multiple hidden>
+                <button class="btn btn--primary" data-pick="photos-file">Select pictures</button>
+            </div>
+            <div class="panel hidden" id="photos-workspace">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label" for="photos-paper">Page size</label>
+                        <select id="photos-paper" class="form-control">
+                            <option value="fit" selected>Match each picture (no borders)</option>
+                            <option value="a4">A4</option>
+                            <option value="a5">A5</option>
+                            <option value="letter">Letter</option>
+                            <option value="legal">Legal</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="photos-margin">Margin (mm)</label>
+                        <input type="number" id="photos-margin" class="form-control" value="0" min="0" max="40" step="1">
+                    </div>
+                </div>
+                <p class="hint hint--inline">Pictures are turned the right way up from what the camera
+                   recorded, and scaled down to a sensible size before they go in - a 12-megapixel
+                   photograph of one A4 sheet makes a needlessly enormous PDF otherwise. Drag the
+                   thumbnails to reorder; click ✕ to drop one.</p>
+                <div class="page-grid" id="photos-grid"></div>
+                <div class="action-buttons">
+                    <button class="btn btn--primary" id="photos-build">📄 Make the PDF</button>
+                    <button class="btn btn--secondary" id="photos-clear">Start again</button>
+                </div>
+                <div id="photos-result" class="result-box hidden"></div>
             </div>
         </div>
 
@@ -1227,6 +1271,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.27.0"></script>
+    <script src="app.js?v=4.28.0"></script>
 </body>
 </html>
