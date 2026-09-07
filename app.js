@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.26.0';
+const APP_VERSION = '4.27.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1741,10 +1741,36 @@ const PagesTool = {
             $('pages-split-every').classList.toggle('hidden', e.target.value !== 'every');
             $('pages-split-ranges').classList.toggle('hidden', e.target.value !== 'ranges');
         });
+        $('pages-contents').addEventListener('change', (e) => {
+            $('pages-contents-title-group').classList.toggle('hidden', !e.target.checked);
+            this.rebuild();
+        });
+        $('pages-bookmarks').addEventListener('change', () => this.rebuild());
+        $('pages-contents-title').addEventListener('change', () => this.rebuild());
+    },
+
+    /** Changing a bundle option after the files are loaded has to do
+     *  something, or it silently does nothing at all. The files are still to
+     *  hand, so the bundle is simply built again - unless pages have been
+     *  rearranged since, which rebuilding would throw away. */
+    async rebuild() {
+        const note = $('pages-bundle-note');
+        note.classList.add('hidden');
+        if (!this.files || this.files.length < 2) return;
+        if (this.past.length) {
+            note.textContent = 'Pages have been rearranged here, so the bundle was left as it is. ' +
+                               'Choose the files again to rebuild it with this setting.';
+            note.classList.remove('hidden');
+            return;
+        }
+        await this.open(this.files);
     },
 
     async open(files) {
         if (!files.length) return;
+        // Kept so a change to the bundle options can rebuild from the same
+        // files rather than doing nothing.
+        this.files = files;
         await UI.run('Loading pages…', async () => {
             // Multiple files are merged first, then organised as one document.
             const ids = [];
@@ -1756,7 +1782,14 @@ const PagesTool = {
             // Merging is used even for a single file: it yields a plain copy of
             // the already-open document, so a protected file is not re-read
             // from its still-encrypted bytes and asked about a second time.
-            const merged = await engine.call('merge', JSON.stringify(ids));
+            // Named after the files, so a bundle's bookmarks and contents page
+            // say which document each part is.
+            const labels = Array.from(files).map((f) => f.name.replace(/\.pdf$/i, ''));
+            const bundle = files.length > 1;
+            const merged = await engine.call('merge', JSON.stringify(ids), JSON.stringify(labels),
+                                             bundle && $('pages-bookmarks').checked,
+                                             bundle && $('pages-contents').checked,
+                                             $('pages-contents-title').value.trim() || 'Contents');
             await engine.call('open_doc', 'pages', merged);
             for (const id of ids) await engine.call('close_doc', id);
 
@@ -3889,6 +3922,262 @@ const ScanTool = {
 /* 12. Inspect & sanitize                                              */
 /* ------------------------------------------------------------------ */
 
+/* ------------------------------------------------------------------ */
+/* Verify a signature already on a document                            */
+/* ------------------------------------------------------------------ */
+
+/* Hash OIDs, so the digest the signer committed to is compared with the
+ * matching digest of the file rather than a hopeful guess. */
+const DIGEST_BY_OID = {
+    '1.3.14.3.2.26': 'sha1',
+    '2.16.840.1.101.3.4.2.1': 'sha256',
+    '2.16.840.1.101.3.4.2.2': 'sha384',
+    '2.16.840.1.101.3.4.2.3': 'sha512',
+};
+
+function hexToBinary(hex) {
+    let out = '';
+    for (let i = 0; i < hex.length; i += 2) out += String.fromCharCode(parseInt(hex.substr(i, 2), 16));
+    return out;
+}
+
+/** A PDF date - "D:20260906185550+05'30'" - as something a person reads. */
+function readPdfDate(text) {
+    const m = /D:(\d{4})(\d{2})(\d{2})(\d{2})?(\d{2})?(\d{2})?([+\-Z])?(\d{2})?'?(\d{2})?/.exec(text || '');
+    if (!m) return '';
+    const [, y, mo, d, hh = '00', mm = '00', ss = '00', sign, oh, om] = m;
+    const zone = !sign || sign === 'Z' ? 'UTC' : `UTC${sign}${oh}:${om || '00'}`;
+    return `${d}/${mo}/${y} ${hh}:${mm}:${ss} ${zone}`;
+}
+
+function asn1Date(node) {
+    try {
+        return node.type === forge.asn1.Type.UTCTIME
+            ? forge.asn1.utcTimeToDate(node.value)
+            : forge.asn1.generalizedTimeToDate(node.value);
+    } catch (err) {
+        return null;
+    }
+}
+
+/**
+ * What can honestly be said about one signature.
+ *
+ * Two separate questions, and they are worth keeping apart. Has the document
+ * changed since it was signed? - answered by comparing the digest the signer
+ * committed to with the digest of the bytes as they are now. Was the
+ * signature really made with this certificate's key? - answered by verifying
+ * it over the signed attributes. A tampered file usually fails the first and
+ * passes the second, and saying only "invalid" would hide which.
+ */
+function describeSignature(sig) {
+    const report = {
+        field: sig.field, name: sig.name, reason: sig.reason, location: sig.location,
+        claimedAt: readPdfDate(sig.signedAt),
+        coversWholeFile: sig.coversWholeFile,
+        coveredTo: sig.coveredTo, fileSize: sig.fileSize,
+        unchanged: null, signatureValid: null, algorithm: '',
+        signer: '', issuer: '', serial: '', validFrom: '', validTo: '',
+        expiredNow: null, validWhenSigned: null, signedAt: '', chain: [], problem: '',
+    };
+
+    let p7; let cap;
+    try {
+        p7 = forge.pkcs7.messageFromAsn1(forge.asn1.fromDer(
+            forge.util.createBuffer(hexToBinary(sig.cms))));
+        cap = p7.rawCapture;
+    } catch (err) {
+        report.problem = 'This signature could not be read as PKCS#7.';
+        return report;
+    }
+
+    const algo = DIGEST_BY_OID[forge.asn1.derToOid(cap.digestAlgorithm)] || '';
+    report.algorithm = algo ? algo.toUpperCase() : 'an unrecognised hash';
+
+    // The certificate that signed is the one the signer info names by issuer
+    // and serial - not simply the first in the blob. A real DSC carries its
+    // whole chain, and the certifying authority is often listed first.
+    const wanted = forge.util.bytesToHex(cap.serial || '').replace(/^0+/, '');
+    const signer = p7.certificates.find(
+        (c) => String(c.serialNumber).replace(/^0+/, '') === wanted) || p7.certificates[0];
+    report.chain = p7.certificates.map((c) => ({
+        subject: (c.subject.getField('CN') || c.subject.getField('O') || {}).value || '',
+        issuer: (c.issuer.getField('CN') || {}).value || '',
+        isSigner: c === signer,
+    }));
+
+    if (signer) {
+        report.signer = (signer.subject.getField('CN') || {}).value || '';
+        report.org = (signer.subject.getField('O') || {}).value || '';
+        report.issuer = (signer.issuer.getField('CN') || {}).value || '';
+        report.serial = String(signer.serialNumber);
+        report.validFrom = signer.validity.notBefore.toLocaleDateString();
+        report.validTo = signer.validity.notAfter.toLocaleDateString();
+        report.expiredNow = signer.validity.notAfter < new Date();
+    }
+
+    let claimed = null;
+    (cap.authenticatedAttributes || []).forEach((attr) => {
+        const oid = forge.asn1.derToOid(attr.value[0].value);
+        if (oid === forge.pki.oids.messageDigest) {
+            claimed = forge.util.bytesToHex(attr.value[1].value[0].value);
+        } else if (oid === forge.pki.oids.signingTime) {
+            const when = asn1Date(attr.value[1].value[0]);
+            if (when) {
+                report.signedAt = when.toLocaleString();
+                if (signer) {
+                    report.validWhenSigned = when >= signer.validity.notBefore
+                                          && when <= signer.validity.notAfter;
+                }
+            }
+        }
+    });
+
+    if (claimed && algo && sig.digests[algo]) {
+        report.unchanged = claimed.toLowerCase() === sig.digests[algo].toLowerCase();
+    } else if (!algo) {
+        report.problem = 'This signature uses a hash this browser does not know.';
+    }
+
+    try {
+        const set = forge.asn1.create(forge.asn1.Class.UNIVERSAL, forge.asn1.Type.SET, true,
+                                      cap.authenticatedAttributes);
+        const md = forge.md[algo].create();
+        md.update(forge.asn1.toDer(set).getBytes());
+        report.signatureValid = signer.publicKey.verify(md.digest().getBytes(), cap.signature);
+    } catch (err) {
+        report.signatureValid = null;
+        if (!report.problem) {
+            report.problem = 'The signature arithmetic could not be checked here. It may use a ' +
+                             'key type this browser cannot verify, such as ECDSA or RSA-PSS.';
+        }
+    }
+    return report;
+}
+
+/** One sentence for the document as a whole. */
+function overallVerdict(reports) {
+    if (!reports.length) {
+        return { tone: 'none', text: 'This PDF carries no digital signature.' };
+    }
+    const broken = reports.filter((r) => r.unchanged === false);
+    const unknown = reports.filter((r) => r.unchanged === null || r.signatureValid === null);
+    const partial = reports.filter((r) => r.unchanged !== false && !r.coversWholeFile);
+    if (broken.length) {
+        return { tone: 'bad', text: broken.length === reports.length
+            ? 'This document has changed since it was signed.'
+            : `${broken.length} of ${reports.length} signatures no longer match the document.` };
+    }
+    if (unknown.length) {
+        return { tone: 'warn', text: 'Part of this could not be checked here - see the detail below.' };
+    }
+    if (partial.length) {
+        return { tone: 'warn', text: 'Unchanged up to the point it was signed, but something was ' +
+                                     'added to the file afterwards.' };
+    }
+    return { tone: 'good', text: reports.length === 1
+        ? 'Signed, and not a byte has changed since.'
+        : `All ${reports.length} signatures match, and not a byte has changed since.` };
+}
+
+const VerifyTool = {
+    init() {
+        $('verify-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
+    },
+
+    async open(files) {
+        const list = Array.isArray(files) ? files : [files].filter(Boolean);
+        if (!list.length) return;
+        $('verify-workspace').classList.remove('hidden');
+        const root = $('verify-results');
+        root.innerHTML = '';
+
+        await UI.run('Checking signatures…', async () => {
+            for (const file of list) {
+                let block;
+                try {
+                    const bytes = await fileToBytes(file);
+                    // Deliberately not opened through the engine's document
+                    // cache: verification needs the file exactly as delivered,
+                    // and a password-protected file can still be checked - the
+                    // signature covers the bytes, not the plain text.
+                    const found = await engine.callJSON('verify_signatures', bytes);
+                    const reports = found.signatures.map((sig) => describeSignature(sig));
+                    block = this.render(file.name, found, reports);
+                } catch (err) {
+                    block = `<div class="verify-card verify-card--warn">
+                        <h4>${escapeText(file.name)}</h4>
+                        <p>${escapeText(UI.explain(err))}</p></div>`;
+                }
+                root.insertAdjacentHTML('beforeend', block);
+            }
+        });
+    },
+
+    render(fileName, found, reports) {
+        const verdict = overallVerdict(reports);
+        const head = `<div class="verify-card verify-card--${verdict.tone}">
+            <h4>${escapeText(fileName)}</h4>
+            <p class="verify-verdict">${escapeText(verdict.text)}</p>`;
+
+        if (!reports.length) {
+            return `${head}<p class="hint hint--inline">A signature <em>drawn or pasted</em> on a page is
+                a picture, not a digital signature, and leaves nothing to check. If this document was
+                supposed to be signed with a DSC, it was not.</p></div>`;
+        }
+
+        const rows = reports.map((r, i) => {
+            const mark = (state, yes, no, unknown) =>
+                state === true ? `<span class="verify-yes">✓ ${yes}</span>`
+                : state === false ? `<span class="verify-no">✗ ${no}</span>`
+                : `<span class="verify-unknown">? ${unknown}</span>`;
+            const chain = r.chain.length > 1
+                ? `<div class="verify-chain">Certificate chain: ${r.chain.map((c) =>
+                    `<span class="${c.isSigner ? 'verify-chain__signer' : ''}">${escapeText(c.subject)}</span>`)
+                    .join(' ← ')}</div>`
+                : '';
+            const covered = r.coversWholeFile
+                ? '<span class="verify-yes">✓ covers the whole file</span>'
+                : `<span class="verify-no">✗ covers ${formatSize(r.coveredTo)} of ` +
+                  `${formatSize(r.fileSize)} - the rest was added after signing</span>`;
+            return `<div class="verify-sig">
+                <div class="verify-sig__head">Signature ${i + 1}${r.field ? ` · ${escapeText(r.field)}` : ''}</div>
+                <dl class="verify-facts">
+                    <dt>Signed by</dt><dd>${escapeText(r.signer || r.name || 'not named')}${
+                        r.org ? ` <span class="muted">(${escapeText(r.org)})</span>` : ''}</dd>
+                    <dt>Issued by</dt><dd>${escapeText(r.issuer || 'not named')}</dd>
+                    <dt>Signed at</dt><dd>${escapeText(r.signedAt || r.claimedAt || 'not stated')}</dd>
+                    ${r.reason ? `<dt>Reason</dt><dd>${escapeText(r.reason)}</dd>` : ''}
+                    ${r.location ? `<dt>Place</dt><dd>${escapeText(r.location)}</dd>` : ''}
+                    <dt>Document unchanged</dt><dd>${mark(r.unchanged,
+                        'not a byte has changed since signing',
+                        'the document has been changed since it was signed',
+                        'could not be checked')}</dd>
+                    <dt>Signature</dt><dd>${mark(r.signatureValid,
+                        `made with this certificate's key (${escapeText(r.algorithm)})`,
+                        'does not match this certificate',
+                        'could not be checked here')}</dd>
+                    <dt>Coverage</dt><dd>${covered}</dd>
+                    <dt>Certificate</dt><dd>valid ${escapeText(r.validFrom)} to ${escapeText(r.validTo)}${
+                        r.expiredNow ? ' <span class="verify-no">- expired now</span>' : ''}${
+                        r.validWhenSigned === false
+                            ? ' <span class="verify-no">- and had expired when this was signed</span>'
+                            : r.validWhenSigned === true ? ' <span class="muted">- in date when signed</span>' : ''}</dd>
+                </dl>
+                ${chain}
+                ${r.problem ? `<p class="verify-problem">${escapeText(r.problem)}</p>` : ''}
+            </div>`;
+        }).join('');
+
+        const revisions = found.revisions > 1
+            ? `<p class="hint hint--inline">The file has ${found.revisions} saved revisions. That is normal
+               for a signed document - signing adds one - but it means earlier versions of the pages are
+               still inside the file.</p>`
+            : '';
+        return `${head}${rows}${revisions}</div>`;
+    },
+};
+
 const InspectTool = {
     init() {
         $('inspect-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
@@ -4122,7 +4411,7 @@ const TOOL_CARDS = [
       blurb: 'Search and replace inside a PDF, matching the original styling.', badge: 'New' },
 
     { group: 'Organise', tab: 'pages', icon: '📚', name: 'Pages',
-      blurb: 'Merge, split, reorder by drag, rotate and delete.' },
+      blurb: 'Merge into a bundle with bookmarks and a contents page, split, reorder, rotate.' },
     { group: 'Organise', tab: 'autosplit', icon: '✂️', name: 'Auto-Split',
       blurb: 'Break a bundle into one file per invoice, named from the text.', badge: 'New' },
     { group: 'Organise', tab: 'compare', icon: '⚖️', name: 'Compare',
@@ -4134,6 +4423,8 @@ const TOOL_CARDS = [
       blurb: 'Detect PAN, GSTIN, Aadhaar, cards and more - then redact them.', badge: 'New' },
     { group: 'Protect', tab: 'inspect', icon: '🕵️', name: 'Inspect & Sanitize',
       blurb: 'See what hides in a PDF - metadata, scripts, attachments - and strip it.', badge: 'New' },
+    { group: 'Protect', tab: 'verify', icon: '🔎', name: 'Verify Signature',
+      blurb: 'Check a signed 26AS, Form 16 or invoice: who signed it, and has it changed since.', badge: 'New' },
     { group: 'Protect', tab: 'redact', icon: '⬛', name: 'Redact',
       blurb: 'Black out content so it is deleted from the file, not just covered.' },
     { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Password Protect',
@@ -4180,7 +4471,7 @@ const Dashboard = {
 
 const Tools = [EditTool, PagesTool, SignTool, StampTool, OcrTool,
                CompressTool, ProtectTool, RedactTool, ExportTool, CompareTool,
-               ScanTool, InspectTool, ReplaceTool, AutoSplitTool, Dashboard];
+               ScanTool, InspectTool, VerifyTool, ReplaceTool, AutoSplitTool, Dashboard];
 
 // Start fetching the engine immediately - this file is loaded at the end of
 // <body>, so the download overlaps with DOM construction instead of queueing

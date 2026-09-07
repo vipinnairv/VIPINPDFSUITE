@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.26.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.26.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.26.0">
-    <link rel="manifest" href="site.webmanifest?v=4.26.0">
+    <link rel="icon" href="favicon.svg?v=4.27.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.27.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.27.0">
+    <link rel="manifest" href="site.webmanifest?v=4.27.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.26.0">
+    <link rel="stylesheet" href="style.css?v=4.27.0">
     <script src="https://cdn.jsdelivr.net/pyodide/v314.0.5/full/pyodide.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
@@ -32,7 +32,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.26.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.27.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -57,6 +57,7 @@
             <button class="tab-btn" data-tab="redact" role="tab" aria-selected="false" aria-controls="redact-tab">⬛ Redact</button>
             <button class="tab-btn" data-tab="scan" role="tab" aria-selected="false" aria-controls="scan-tab">🛡️ Find Sensitive Data</button>
             <button class="tab-btn" data-tab="inspect" role="tab" aria-selected="false" aria-controls="inspect-tab">🕵️ Inspect</button>
+            <button class="tab-btn" data-tab="verify" role="tab" aria-selected="false" aria-controls="verify-tab">🔎 Verify Signature</button>
             <button class="tab-btn" data-tab="replace" role="tab" aria-selected="false" aria-controls="replace-tab">🔁 Find &amp; Replace</button>
             <button class="tab-btn" data-tab="autosplit" role="tab" aria-selected="false" aria-controls="autosplit-tab">✂️ Auto-Split</button>
             <button class="tab-btn" data-tab="export" role="tab" aria-selected="false" aria-controls="export-tab">📤 Export</button>
@@ -272,6 +273,23 @@
                 <p>Drop one or more PDFs here (multiple files will be merged in order)</p>
                 <input type="file" id="pages-file" accept=".pdf" multiple hidden>
                 <button class="btn btn--primary" data-pick="pages-file">Select PDFs</button>
+            </div>
+
+            <div class="panel panel--tight" id="pages-bundle">
+                <h4 class="side-subtitle">Building a bundle from several files</h4>
+                <p class="hint hint--inline">Thirty annexures joined end to end are hard to move around in.
+                   These keep the parts findable - each file gets a bookmark named after it, with that file's
+                   own bookmarks kept underneath, and the contents page rows are links.</p>
+                <label class="checkbox-row"><input type="checkbox" id="pages-bookmarks" checked>
+                    A bookmark for each file</label>
+                <label class="checkbox-row"><input type="checkbox" id="pages-contents">
+                    A contents page at the front</label>
+                <div class="form-group hidden" id="pages-contents-title-group">
+                    <label class="form-label" for="pages-contents-title">Heading for the contents page</label>
+                    <input type="text" id="pages-contents-title" class="form-control" value="Contents"
+                           placeholder="Contents">
+                </div>
+                <p class="unsaved-note hidden" id="pages-bundle-note"></p>
             </div>
 
             <div class="workspace workspace--full hidden" id="pages-workspace">
@@ -916,6 +934,29 @@
             </div>
         </div>
 
+        <div class="tab-content" id="verify-tab" role="tabpanel" tabindex="0">
+            <div class="tool-header">
+                <h2>Verify Signature</h2>
+                <p>Checks a digitally signed PDF - a 26AS, Form 16, GST return, MCA filing or signed invoice - and says who signed it and whether a single byte has changed since</p>
+            </div>
+            <div class="file-drop-zone" data-drop="verify" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
+                <p>Drop one or more signed PDFs here, or click to select</p>
+                <input type="file" id="verify-file" accept=".pdf" multiple hidden>
+                <button class="btn btn--primary" data-pick="verify-file">Select PDF</button>
+            </div>
+            <div class="panel hidden" id="verify-workspace">
+                <div id="verify-results"></div>
+                <p class="hint hint--inline">Everything here is worked out on this device: the file is never
+                   uploaded, and no certificate authority is contacted.
+                   <strong>What this can prove</strong> is that the document has not changed since it was
+                   signed, and that the signature was made with the private key belonging to the certificate
+                   shown. <strong>What it cannot prove on its own</strong> is that the certificate is genuine -
+                   that needs the issuing authority's root, which lives in your reader's trust list. Check the
+                   issuer named below against the CCA India list of licensed certifying authorities if that
+                   matters for the document in hand.</p>
+            </div>
+        </div>
+
         <!-- ========================= FIND & REPLACE ========================= -->
         <div class="tab-content" id="replace-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
@@ -1186,6 +1227,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.26.0"></script>
+    <script src="app.js?v=4.27.0"></script>
 </body>
 </html>
