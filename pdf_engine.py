@@ -12,9 +12,9 @@ the page (0..1) so it never has to care about PDF points or the flipped y-axis.
 import base64
 import csv
 import difflib
+import hashlib
 import io
 import json
-
 import re
 
 import pymupdf
@@ -757,12 +757,112 @@ def compress(doc_id, level="medium"):
 # page organisation
 # --------------------------------------------------------------------------
 
-def merge(doc_ids_json):
-    """Concatenate several open documents, in the order given."""
+_CONTENTS_MARGIN = 56
+_CONTENTS_LEADING = 22
+
+
+def _contents_pages(out, entries, title, lead):
+    """A contents page at the front, listing each document and where it starts.
+
+    Written before the pages it points at exist in their final positions, so
+    the number of contents pages has to be settled first - the page numbers
+    printed on it depend on how many pages it occupies itself.
+    """
+    shape = out[0].rect if out.page_count else pymupdf.paper_rect("a4")
+    width, height = shape.width, shape.height
+    usable = height - 2 * _CONTENTS_MARGIN - 40          # 40 for the heading
+    per_page = max(1, int(usable // _CONTENTS_LEADING))
+
+    # Every contents page has to exist before a single link is written, because
+    # inserting one shifts the pages after it - and a link binds to the page
+    # that is at that position when it is made, not to the number. Writing as
+    # we went made every link on the first page point one page too far.
+    for index in range(lead):
+        out.new_page(pno=index, width=width, height=height)
+
+    for index in range(lead):
+        page = out[index]
+        page.insert_text((_CONTENTS_MARGIN, _CONTENTS_MARGIN + 12),
+                         title if index == 0 else f"{title} (continued)",
+                         fontname="hebo", fontsize=16)
+        y = _CONTENTS_MARGIN + 46
+        for label, target in entries[index * per_page:(index + 1) * per_page]:
+            # The label can be long; the page number must stay readable, so the
+            # label is trimmed rather than allowed to run into it.
+            room = width - 2 * _CONTENTS_MARGIN - 46
+            text = label
+            while pymupdf.get_text_length(text, fontname="helv", fontsize=11) > room and len(text) > 4:
+                text = text[:-2]
+            if text != label:
+                # Three dots, not an ellipsis character: the built-in
+                # Helvetica has no glyph for it and draws a stray dot instead.
+                text = text[:-3] + "..."
+            page.insert_text((_CONTENTS_MARGIN, y), text, fontname="helv", fontsize=11)
+            number = str(target + 1)
+            page.insert_text((width - _CONTENTS_MARGIN -
+                              pymupdf.get_text_length(number, fontname="helv", fontsize=11), y),
+                             number, fontname="helv", fontsize=11)
+            # The whole row is a link, so the contents page is usable on screen
+            # as well as on paper.
+            page.insert_link({
+                "kind": pymupdf.LINK_GOTO, "page": target,
+                "from": pymupdf.Rect(_CONTENTS_MARGIN, y - 12, width - _CONTENTS_MARGIN, y + 4),
+                "to": pymupdf.Point(0, 0),
+            })
+            y += _CONTENTS_LEADING
+    return per_page
+
+
+def merge(doc_ids_json, labels_json="", bookmarks=False, contents=False, title="Contents"):
+    """Concatenate several open documents, in the order given.
+
+    A bundle of thirty annexures is not much use as thirty concatenated pages
+    with no way in, so the parts can be kept findable: a bookmark per source
+    document - with that document's own bookmarks nested underneath it, rather
+    than thrown away - and a contents page at the front whose rows are links.
+    """
     ids = json.loads(doc_ids_json) if isinstance(doc_ids_json, str) else list(doc_ids_json)
+    labels = json.loads(labels_json) if labels_json else []
     out = pymupdf.open()
+
+    starts = []
+    inner = []
     for doc_id in ids:
-        out.insert_pdf(_doc(doc_id))
+        source = _doc(doc_id)
+        starts.append(out.page_count)
+        try:
+            inner.append(source.get_toc(simple=True) or [])
+        except Exception:
+            inner.append([])
+        out.insert_pdf(source)
+
+    def label_for(index):
+        name = labels[index] if index < len(labels) else ""
+        return str(name).strip() or f"Document {index + 1}"
+
+    # Only worth doing for a real bundle: one document needs neither.
+    wanted = len(ids) > 1 and out.page_count
+    lead = 0
+    if wanted and contents:
+        shape = out[0].rect
+        usable = shape.height - 2 * _CONTENTS_MARGIN - 40
+        per_page = max(1, int(usable // _CONTENTS_LEADING))
+        lead = max(1, -(-len(ids) // per_page))
+        _contents_pages(out, [(label_for(i), starts[i] + lead) for i in range(len(ids))],
+                        title, lead)
+
+    if wanted and bookmarks:
+        toc = []
+        if lead:
+            toc.append([1, title, 1])
+        for index, start in enumerate(starts):
+            toc.append([1, label_for(index), start + lead + 1])
+            for entry in inner[index]:
+                level, name, pno = entry[0], entry[1], entry[2]
+                if pno > 0:
+                    toc.append([level + 1, name, start + lead + pno])
+        out.set_toc(toc)
+
     data = out.tobytes(garbage=3, deflate=True)
     out.close()
     return data
@@ -808,9 +908,13 @@ def organize(doc_id, order_json, rotations_json="{}"):
     order = json.loads(order_json) if isinstance(order_json, str) else list(order_json)
     rotations = json.loads(rotations_json) if isinstance(rotations_json, str) else dict(rotations_json)
 
-    out = pymupdf.open()
+    # A full copy, then select the pages to keep. Building the result page by
+    # page with insert_pdf loses the outline entirely - a bundle's bookmarks
+    # and the links on its contents page vanished the moment it was saved.
+    # select() carries both across and renumbers them.
+    out = pymupdf.open(stream=doc.tobytes(), filetype="pdf")
+    out.select([int(i) for i in order])
     for pos, original in enumerate(order):
-        out.insert_pdf(doc, from_page=int(original), to_page=int(original))
         rot = rotations.get(str(original), rotations.get(int(original), 0)) or 0
         if rot:
             out[pos].set_rotation((out[pos].rotation + int(rot)) % 360)
@@ -1679,6 +1783,127 @@ def finish_signature(doc_id, cms_hex):
 def cancel_signature(doc_id):
     """Forget a prepared signature that was never completed."""
     return bool(_PENDING_SIG.pop(doc_id, None))
+
+
+def _der_length(blob):
+    """How many bytes the DER object at the start of blob occupies.
+
+    A signature sits in a slot padded with zeros, so the blob handed back is
+    longer than the signature in it. Reading the length header is the only
+    way to know where it really ends - trimming trailing zeros would eat a
+    legitimate one.
+    """
+    if len(blob) < 2 or blob[0] != 0x30:
+        return len(blob)
+    first = blob[1]
+    if first < 0x80:
+        return 2 + first
+    count = first & 0x7F
+    if count == 0 or len(blob) < 2 + count:
+        return len(blob)
+    return 2 + count + int.from_bytes(blob[2:2 + count], "big")
+
+
+def verify_signatures(data):
+    """Every signature in a PDF, and what each one covers.
+
+    The certificate arithmetic is finished in the browser, where the
+    certificate parser already lives. What only the file can answer is done
+    here: which bytes each signature covers, whether anything was added
+    afterwards, and what those bytes hash to. The caller compares that hash
+    with the one inside the signature - if they differ, the document changed
+    after it was signed.
+    """
+    raw = bytes(data)
+    signatures = []
+
+    for match in re.finditer(rb"/ByteRange\s*\[([^\]]*)\]", raw):
+        try:
+            nums = [int(n) for n in match.group(1).split()]
+        except ValueError:
+            continue
+        if len(nums) != 4:
+            continue
+        start1, len1, start2, len2 = nums
+        # A placeholder that was never filled in has a byte range of zeros or
+        # of the padding digits; anything that does not describe real spans of
+        # this file is not a signature to report on.
+        if (start1 != 0 or len1 <= 0 or len2 < 0
+                or start2 < start1 + len1 or start2 + len2 > len(raw)):
+            continue
+        hole = raw[start1 + len1:start2]
+        if not (hole.startswith(b"<") and hole.endswith(b">")):
+            continue
+
+        digits = re.sub(r"[^0-9A-Fa-f]", "", hole[1:-1].decode("latin-1"))
+        blob = bytes.fromhex(digits[:len(digits) - len(digits) % 2])
+        blob = blob[:_der_length(blob)]
+        if not blob:
+            continue                  # an empty slot: prepared, never signed
+
+        covered = raw[start1:start1 + len1] + raw[start2:start2 + len2]
+        signatures.append({
+            "byteRange": nums,
+            "coveredTo": start2 + len2,
+            "fileSize": len(raw),
+            # Anything past the covered range was added after this signature:
+            # another signature, a form filled in, or an edit.
+            "coversWholeFile": start2 + len2 == len(raw),
+            "cms": blob.hex(),
+            "digests": {
+                "sha1": hashlib.sha1(covered).hexdigest(),
+                "sha256": hashlib.sha256(covered).hexdigest(),
+                "sha384": hashlib.sha384(covered).hexdigest(),
+                "sha512": hashlib.sha512(covered).hexdigest(),
+            },
+            "field": "", "name": "", "reason": "", "location": "",
+            "signedAt": "", "subFilter": "",
+        })
+
+    # What the document itself says about those fields. It is only a label -
+    # the name in a signature dictionary is typed by whoever signed and is
+    # not evidence of anything - but it is what a reader shows, so show it too.
+    if signatures:
+        try:
+            doc = pymupdf.open(stream=raw, filetype="pdf")
+            if not doc.needs_pass:
+                for page in doc:
+                    for widget in page.widgets():
+                        if widget.field_type != pymupdf.PDF_WIDGET_TYPE_SIGNATURE:
+                            continue
+                        value = doc.xref_get_key(widget.xref, "V")
+                        if value[0] != "xref":
+                            continue
+                        sig_xref = int(value[1].split()[0])
+                        spread = doc.xref_get_key(sig_xref, "ByteRange")
+                        if spread[0] != "array":
+                            continue
+                        try:
+                            nums = [int(n) for n in spread[1].strip("[]").split()]
+                        except ValueError:
+                            continue
+                        for entry in signatures:
+                            if entry["byteRange"] != nums:
+                                continue
+                            entry["field"] = widget.field_name or ""
+                            for key, into in (("Name", "name"), ("Reason", "reason"),
+                                              ("Location", "location"), ("M", "signedAt"),
+                                              ("SubFilter", "subFilter")):
+                                got = doc.xref_get_key(sig_xref, key)
+                                if got[0] in ("string", "name"):
+                                    entry[into] = got[1].lstrip("/")
+            doc.close()
+        except Exception:
+            pass                      # metadata is a nicety; the maths is not
+
+    signatures.sort(key=lambda s: s["coveredTo"])
+    return json.dumps({
+        "signatures": signatures,
+        "fileSize": len(raw),
+        # Each save appends a revision. More than one is normal for a signed
+        # document - signing is itself a revision - but it is worth knowing.
+        "revisions": raw.count(b"%%EOF"),
+    })
 
 
 def _pdf_escape(text):

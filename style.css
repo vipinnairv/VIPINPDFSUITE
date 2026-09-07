@@ -2066,3 +2066,71 @@ body {
     background: rgba(33, 128, 141, 0.14);
     pointer-events: none;
 }
+
+/* ---- verifying a signature already on a document ------------------- */
+.verify-card {
+    border: 1px solid var(--color-card-border);
+    border-left: 4px solid var(--color-border);
+    border-radius: var(--radius-base);
+    padding: var(--space-16);
+    margin-bottom: var(--space-16);
+    background: var(--color-surface);
+}
+.verify-card h4 { margin: 0 0 var(--space-4); word-break: break-all; }
+.verify-card--good { border-left-color: var(--color-success); }
+.verify-card--bad { border-left-color: var(--color-error); }
+.verify-card--warn { border-left-color: var(--color-warning); }
+.verify-card--none { border-left-color: var(--color-info, var(--color-border)); }
+
+.verify-verdict { margin: 0 0 var(--space-12); font-weight: var(--font-weight-semibold); }
+.verify-card--good .verify-verdict { color: var(--color-success); }
+.verify-card--bad .verify-verdict { color: var(--color-error); }
+.verify-card--warn .verify-verdict { color: var(--color-warning); }
+
+.verify-sig {
+    border-top: 1px solid var(--color-card-border);
+    padding-top: var(--space-12);
+    margin-top: var(--space-12);
+}
+.verify-sig__head {
+    font-size: var(--font-size-sm);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--color-text-secondary);
+    margin-bottom: var(--space-8);
+}
+/* Label and value side by side on a desktop, stacked when there is no room
+   for two columns. */
+.verify-facts {
+    display: grid;
+    grid-template-columns: minmax(120px, 180px) 1fr;
+    gap: var(--space-4) var(--space-12);
+    margin: 0;
+}
+.verify-facts dt { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+.verify-facts dd { margin: 0; overflow-wrap: anywhere; }
+@media (max-width: 560px) {
+    .verify-facts { grid-template-columns: 1fr; gap: 0 0; }
+    .verify-facts dd { margin-bottom: var(--space-8); }
+}
+
+.verify-yes { color: var(--color-success); }
+.verify-no { color: var(--color-error); font-weight: var(--font-weight-semibold); }
+.verify-unknown { color: var(--color-warning); }
+
+.verify-chain {
+    margin-top: var(--space-8);
+    font-size: var(--font-size-sm);
+    color: var(--color-text-secondary);
+}
+.verify-chain__signer { color: var(--color-text); font-weight: var(--font-weight-semibold); }
+.verify-problem {
+    margin: var(--space-8) 0 0;
+    font-size: var(--font-size-sm);
+    color: var(--color-warning);
+}
+
+/* A short options block that sits with the drop zone rather than inside a
+   workspace, so it can be set before the files are chosen. */
+.panel--tight { padding: var(--space-16); margin-bottom: var(--space-16); }
+.panel--tight .side-subtitle { margin-top: 0; }
