@@ -898,15 +898,16 @@ def split(doc_id, mode="individual", spec="", every=1):
     return json.dumps(parts)
 
 
-def organize(doc_id, order_json, rotations_json="{}"):
-    """Reorder/rotate/drop pages. `order_json` lists original indices to keep.
+def organize(doc_id, order_json, rotations_json="{}", crops_json="{}"):
+    """Reorder/rotate/crop/drop pages. `order_json` lists indices to keep.
 
-    Both arguments arrive as JSON strings: values handed straight over the
+    The arguments arrive as JSON strings: values handed straight over the
     JS bridge become JsProxy objects, which lack the dict/list API used here.
     """
     doc = _doc(doc_id)
     order = json.loads(order_json) if isinstance(order_json, str) else list(order_json)
     rotations = json.loads(rotations_json) if isinstance(rotations_json, str) else dict(rotations_json)
+    crops = json.loads(crops_json) if isinstance(crops_json, str) else dict(crops_json or {})
 
     # A full copy, then select the pages to keep. Building the result page by
     # page with insert_pdf loses the outline entirely - a bundle's bookmarks
@@ -915,9 +916,22 @@ def organize(doc_id, order_json, rotations_json="{}"):
     out = pymupdf.open(stream=doc.tobytes(), filetype="pdf")
     out.select([int(i) for i in order])
     for pos, original in enumerate(order):
+        page = out[pos]
+        box = crops.get(str(original), crops.get(int(original)))
+        if box:
+            # The crop box is what a reader shows and what a printer prints.
+            # The content outside it is still in the file - trimming a margin
+            # is not redaction, and this must not be mistaken for it.
+            whole = page.rect
+            page.set_cropbox(pymupdf.Rect(
+                whole.x0 + float(box["x0"]) * whole.width,
+                whole.y0 + float(box["y0"]) * whole.height,
+                whole.x0 + float(box["x1"]) * whole.width,
+                whole.y0 + float(box["y1"]) * whole.height,
+            ))
         rot = rotations.get(str(original), rotations.get(int(original), 0)) or 0
         if rot:
-            out[pos].set_rotation((out[pos].rotation + int(rot)) % 360)
+            page.set_rotation((page.rotation + int(rot)) % 360)
     data = out.tobytes(garbage=3, deflate=True)
     out.close()
     return data
@@ -2703,6 +2717,191 @@ def _combine_tables(sheets):
 _XLSX_BATCH = {}
 
 
+# --------------------------------------------------------------------------
+# pictures into a document
+# --------------------------------------------------------------------------
+
+# Photographs of paper are how a great many documents arrive - a client
+# sends eight pictures of a rent agreement, or a phone stands in for a
+# scanner. They accumulate here until the whole set is known, because the
+# page size can depend on all of them.
+_IMAGE_BATCH = {}
+
+# Points, at 72 to the inch.
+_PAPER = {
+    "a4": (595.28, 841.89),
+    "a5": (419.53, 595.28),
+    "letter": (612.0, 792.0),
+    "legal": (612.0, 1008.0),
+}
+_MM = 72.0 / 25.4
+
+
+def start_image_pdf(key):
+    """Begin collecting pictures for a new document."""
+    _IMAGE_BATCH[key] = []
+    return True
+
+
+def add_image_page(key, data, name=""):
+    """Hold one picture. Returns what the engine can see in it."""
+    raw = bytes(data)
+    try:
+        pix = pymupdf.Pixmap(raw)
+        width, height = pix.width, pix.height
+        pix = None
+    except Exception:
+        raise ValueError("IMAGE_UNREADABLE")
+    _IMAGE_BATCH.setdefault(key, []).append({"raw": raw, "name": str(name)})
+    return json.dumps({"ok": True, "width": width, "height": height,
+                       "count": len(_IMAGE_BATCH[key])})
+
+
+def finish_image_pdf(key, paper="fit", margin_mm=0, landscape=False):
+    """Build the document and forget the pictures.
+
+    "fit" gives every page the shape of its own picture, so nothing is
+    letterboxed and nothing is cropped - the usual want for a phone
+    photograph. A named paper size is for printing, where the pages have to
+    match each other and the tray.
+    """
+    images = _IMAGE_BATCH.pop(key, [])
+    if not images:
+        raise ValueError("NO_IMAGES")
+
+    margin = max(0.0, float(margin_mm)) * _MM
+    out = pymupdf.open()
+    for item in images:
+        pix = pymupdf.Pixmap(item["raw"])
+        wide, high = pix.width, pix.height
+        pix = None
+        if not wide or not high:
+            continue
+
+        if str(paper) == "fit":
+            # The page takes the picture's own shape, scaled so its long edge
+            # matches A4's - a photograph then prints at a sensible size
+            # instead of at whatever pixel count the camera happened to use.
+            long_edge = _PAPER["a4"][1]
+            if wide >= high:
+                page_w, page_h = long_edge, long_edge * high / wide
+            else:
+                page_w, page_h = long_edge * wide / high, long_edge
+            page_w += 2 * margin
+            page_h += 2 * margin
+        else:
+            page_w, page_h = _PAPER.get(str(paper), _PAPER["a4"])
+            # Turn the paper to suit the picture rather than shrinking a
+            # landscape photograph into a portrait page.
+            wants_landscape = bool(landscape) or wide > high
+            if wants_landscape:
+                page_w, page_h = page_h, page_w
+
+        page = out.new_page(width=page_w, height=page_h)
+        room = pymupdf.Rect(margin, margin, page_w - margin, page_h - margin)
+        if room.is_empty or room.width <= 0 or room.height <= 0:
+            room = page.rect
+        # Fit inside the margins without distorting: PyMuPDF keeps the aspect
+        # ratio and centres what is left over.
+        page.insert_image(room, stream=item["raw"], keep_proportion=True)
+
+    if not out.page_count:
+        out.close()
+        raise ValueError("NO_IMAGES")
+    data = out.tobytes(garbage=3, deflate=True)
+    out.close()
+    return data
+
+
+def cancel_image_pdf(key):
+    """Forget pictures collected for a document that was never built."""
+    return bool(_IMAGE_BATCH.pop(key, None))
+
+
+# --------------------------------------------------------------------------
+# trimming margins
+# --------------------------------------------------------------------------
+
+_TRIM_SCALE = 0.5
+
+
+def _ink_rows(samples, width, height, floor):
+    """The first and last rows of a grey pixmap with anything on them.
+
+    min() over a slice runs in C, so a whole row costs one call. Walking the
+    pixels in Python would be far too slow for a long document under
+    WebAssembly.
+    """
+    first, last = -1, -1
+    for y in range(height):
+        if min(samples[y * width:(y + 1) * width]) < floor:
+            if first < 0:
+                first = y
+            last = y
+    return first, last, height
+
+
+def content_bounds(doc_id, pages_json="", tolerance=12, padding_pt=6):
+    """Where the ink actually is on each page, as fractions of the page.
+
+    Measured from a rendering rather than from the text, because on a scan
+    every word belongs to one big image and the text boxes say nothing about
+    the margins. The columns are read from a second rendering turned on its
+    side, so both passes can use the fast row scan; a scan down the columns
+    in Python would be far too slow for a long document in WebAssembly.
+    """
+    doc = _doc(doc_id)
+    wanted = json.loads(pages_json) if pages_json else list(range(doc.page_count))
+    floor = 255 - max(1, int(tolerance))
+    found = {}
+
+    # Half scale is 36 to the inch: each pixel is two points, finer than any
+    # margin worth trimming, and a fortieth of the pixels of a full render.
+    upright_at = pymupdf.Matrix(_TRIM_SCALE, _TRIM_SCALE)
+    sideways_at = pymupdf.Matrix(_TRIM_SCALE, _TRIM_SCALE).prerotate(90)
+
+    for pno in wanted:
+        index = int(pno)
+        if not 0 <= index < doc.page_count:
+            continue
+        page = doc[index]
+
+        upright = page.get_pixmap(matrix=upright_at, colorspace=pymupdf.csGRAY)
+        top, bottom, rows = _ink_rows(upright.samples, upright.width,
+                                      upright.height, floor)
+        upright = None
+        if top < 0:
+            found[index] = None                 # a blank page: nothing to trim
+            continue
+
+        # Turned on its side, the rows of the rendering are the columns of the
+        # page, and in the same direction - measured, not assumed.
+        sideways = page.get_pixmap(matrix=sideways_at, colorspace=pymupdf.csGRAY)
+        left, right, cols = _ink_rows(sideways.samples, sideways.width,
+                                      sideways.height, floor)
+        sideways = None
+        if left < 0:
+            found[index] = None
+            continue
+
+        span = page.rect
+        pad_x = float(padding_pt) / max(span.width, 1)
+        pad_y = float(padding_pt) / max(span.height, 1)
+        found[index] = {
+            "x0": round(max(0.0, left / cols - pad_x), 5),
+            "y0": round(max(0.0, top / rows - pad_y), 5),
+            "x1": round(min(1.0, (right + 1) / cols + pad_x), 5),
+            "y1": round(min(1.0, (bottom + 1) / rows + pad_y), 5),
+        }
+
+    trimmed = {k: v for k, v in found.items() if v}
+    return json.dumps({
+        "bounds": {str(k): v for k, v in found.items()},
+        "measured": len(found),
+        "blank": len(found) - len(trimmed),
+    })
+
+
 def start_table_batch(key):
     """Begin collecting tables from more than one document."""
     _XLSX_BATCH[key] = []
@@ -3354,6 +3553,32 @@ def inspect(doc_id):
         "pages": doc.page_count,
         "encrypted": _WAS_ENCRYPTED.get(doc_id, False),
     })
+
+
+def extract_attachments(doc_id):
+    """The files carried inside a PDF, so they can be saved out.
+
+    The inspector already says how many there are and can strip them; being
+    told a document carries three attachments and having no way to read them
+    is half an answer. An e-invoice's XML lives here.
+    """
+    doc = _doc(doc_id)
+    found = []
+    for index in range(doc.embfile_count()):
+        try:
+            info = doc.embfile_info(index)
+            data = doc.embfile_get(index)
+        except Exception:
+            continue
+        name = (info.get("filename") or info.get("name")
+                or f"attachment-{index + 1}").strip() or f"attachment-{index + 1}"
+        found.append({
+            "name": name.replace("/", "-").replace("\\", "-"),
+            "size": len(data),
+            "description": info.get("description", "") or "",
+            "b64": base64.b64encode(data).decode(),
+        })
+    return json.dumps(found)
 
 
 def sanitize(doc_id, metadata=True, attachments=True, javascript=True,
