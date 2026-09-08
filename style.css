@@ -1809,6 +1809,9 @@ body {
   font-size: 10px;
   line-height: 1.5;
   white-space: nowrap;
+  /* It used to be a label and nothing else. Now that the size controls live
+     on it, it has to take a click - but only on the controls, so the strip
+     itself still lets a click through to the page behind it. */
   pointer-events: none;
   max-width: 100%;
   overflow: hidden;
@@ -2243,3 +2246,42 @@ body {
 @media (prefers-reduced-motion: reduce) {
     body { background-attachment: scroll; }
 }
+
+/* ---- editing a line: size and width, on the box itself -------------- */
+.inline-edit__tag {
+    display: flex;
+    align-items: center;
+    gap: var(--space-6);
+    white-space: nowrap;
+}
+.inline-edit__step,
+.inline-edit__grip { pointer-events: auto; }
+
+.inline-edit__step {
+    border: 1px solid color-mix(in srgb, var(--color-primary) 55%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+    color: inherit;
+    border-radius: var(--radius-sm);
+    padding: 0 var(--space-6);
+    font-size: var(--font-size-xs);
+    line-height: 1.6;
+    cursor: pointer;
+}
+.inline-edit__step:hover { background: color-mix(in srgb, var(--color-primary) 35%, transparent); }
+.inline-edit__help { opacity: 0.75; }
+
+/* The grip sits on the right edge of the box being edited. */
+.inline-edit__grip {
+    position: absolute;
+    top: 0;
+    right: -4px;
+    width: 8px;
+    height: 100%;
+    min-height: 12px;
+    cursor: ew-resize;
+    background: linear-gradient(90deg, transparent, var(--color-primary));
+    opacity: 0.5;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.inline-edit__grip:hover { opacity: 1; }
+.inline-edit { position: absolute; }
