@@ -104,15 +104,26 @@ MiyeePDF edits the actual document instead:
 
 The engine downloads once (about 28 MB, of which 17.5 MB is the PDF engine itself) in the background while the page is usable. That step's length cannot be measured from the page - Pyodide owns the fetch and does not expose it - so rather than a bar creeping to 97% on a timer, which made a stalled download look almost finished, it says how long it has been going and leaves the bar indeterminate. Past four minutes it says so, and offers to try again. A service worker then keeps it in Cache Storage rather than the ordinary HTTP cache, which is evicted far more readily, so later visits start from disk and the app keeps working with no connection at all.
 
+## While it works
+
+The engine runs in a Web Worker, not in the page. That is what makes the
+interface stay alive during a long job: the main thread has nothing to do but
+draw, so the progress bar actually moves and the browser never offers to kill
+the tab. Where the engine can count pages - shrinking images, reading a page,
+measuring one - the bar is that real count; where there is nothing to count it
+stays indeterminate and shows how long the job has been running, rather than
+inventing a percentage.
+
 ## Development
 
 ```
-index.html      UI markup
-app.js          UI layer + engine bootstrap (no PDF logic)
-pdf_engine.py   every PDF operation
-style.css       design tokens and components
-sw.js           service worker: offline support and engine caching
-vendor/         PyMuPDF WebAssembly wheel
+index.html        UI markup
+app.js            UI layer + engine bootstrap (no PDF logic)
+engine.worker.js  hosts Pyodide and PyMuPDF off the main thread
+pdf_engine.py     every PDF operation
+style.css         design tokens and components
+sw.js             service worker: offline support and engine caching
+vendor/           PyMuPDF WebAssembly wheel
 ```
 
 Built on [PyMuPDF](https://pymupdf.readthedocs.io/) 1.28.2 compiled to WebAssembly, running under [Pyodide](https://pyodide.org/) 314.0.5, with [Tesseract.js](https://tesseract.projectnaptha.com/) for OCR recognition, [JSZip](https://stuk.github.io/jszip/) for multi-file exports and [node-forge](https://github.com/digitalbazaar/forge) for certificate signing.
