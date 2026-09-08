@@ -2,36 +2,36 @@
   /* Primitive Color Tokens */
   --color-white: rgba(255, 255, 255, 1);
   --color-black: rgba(0, 0, 0, 1);
-  --color-cream-50: rgba(252, 252, 249, 1);
-  --color-cream-100: rgba(255, 255, 253, 1);
-  --color-gray-200: rgba(245, 245, 245, 1);
-  --color-gray-300: rgba(167, 169, 169, 1);
-  --color-gray-400: rgba(119, 124, 124, 1);
-  --color-slate-500: rgba(98, 108, 113, 1);
-  --color-brown-600: rgba(94, 82, 64, 1);
-  --color-charcoal-700: rgba(31, 33, 33, 1);
-  --color-charcoal-800: rgba(38, 40, 40, 1);
-  --color-slate-900: rgba(19, 52, 59, 1);
-  --color-teal-300: rgba(50, 184, 198, 1);
-  --color-teal-400: rgba(45, 166, 178, 1);
-  --color-teal-500: rgba(33, 128, 141, 1);
-  --color-teal-600: rgba(29, 116, 128, 1);
-  --color-teal-700: rgba(26, 104, 115, 1);
-  --color-teal-800: rgba(41, 150, 161, 1);
-  --color-red-400: rgba(255, 84, 89, 1);
-  --color-red-500: rgba(192, 21, 47, 1);
-  --color-orange-400: rgba(230, 129, 97, 1);
-  --color-orange-500: rgba(168, 75, 47, 1);
+  --color-cream-50: rgba(238, 244, 252, 1);   /* ice - the light ground */
+  --color-cream-100: rgba(255, 255, 255, 1);  /* white - light surfaces */
+  --color-gray-200: rgba(219, 233, 254, 1);   /* text on the dark ground */
+  --color-gray-300: rgba(159, 182, 214, 1);
+  --color-gray-400: rgba(111, 135, 168, 1);
+  --color-slate-500: rgba(75, 100, 132, 1);   /* secondary text, light */
+  --color-brown-600: rgba(63, 92, 134, 1);    /* borders, light */
+  --color-charcoal-700: rgba(7, 13, 26, 1);   /* the dark ground */
+  --color-charcoal-800: rgba(15, 26, 46, 1);  /* dark surfaces */
+  --color-slate-900: rgba(10, 31, 61, 1);     /* text, light */
+  --color-teal-300: rgba(56, 189, 248, 1);    /* accent, dark */
+  --color-teal-400: rgba(125, 211, 252, 1);
+  --color-teal-500: rgba(11, 99, 197, 1);     /* accent, light */
+  --color-teal-600: rgba(10, 85, 168, 1);
+  --color-teal-700: rgba(8, 74, 146, 1);
+  --color-teal-800: rgba(14, 165, 233, 1);
+  --color-red-400: rgba(255, 107, 129, 1);
+  --color-red-500: rgba(200, 30, 74, 1);
+  --color-orange-400: rgba(246, 185, 59, 1);
+  --color-orange-500: rgba(154, 90, 5, 1);    /* 4.9:1 on white */
 
   /* RGB versions for opacity control */
-  --color-brown-600-rgb: 94, 82, 64;
-  --color-teal-500-rgb: 33, 128, 141;
-  --color-slate-900-rgb: 19, 52, 59;
-  --color-slate-500-rgb: 98, 108, 113;
-  --color-red-500-rgb: 192, 21, 47;
-  --color-red-400-rgb: 255, 84, 89;
-  --color-orange-500-rgb: 168, 75, 47;
-  --color-orange-400-rgb: 230, 129, 97;
+  --color-brown-600-rgb: 63, 92, 134;
+  --color-teal-500-rgb: 11, 99, 197;
+  --color-slate-900-rgb: 10, 31, 61;
+  --color-slate-500-rgb: 75, 100, 132;
+  --color-red-500-rgb: 200, 30, 74;
+  --color-red-400-rgb: 255, 107, 129;
+  --color-orange-500-rgb: 154, 90, 5;
+  --color-orange-400-rgb: 246, 185, 59;
 
   /* Background color tokens (Light Mode) */
   --color-bg-1: rgba(59, 130, 246, 0.08); /* Light blue */
@@ -59,7 +59,7 @@
   --color-card-border: rgba(var(--color-brown-600-rgb), 0.12);
   --color-card-border-inner: rgba(var(--color-brown-600-rgb), 0.12);
   --color-error: var(--color-red-500);
-  --color-success: var(--color-teal-500);
+  --color-success: rgba(13, 148, 96, 1);
   --color-warning: var(--color-orange-500);
   --color-info: var(--color-slate-500);
   --color-focus-ring: rgba(var(--color-teal-500-rgb), 0.4);
@@ -70,14 +70,14 @@
   --focus-outline: 2px solid var(--color-primary);
   --status-bg-opacity: 0.15;
   --status-border-opacity: 0.25;
-  --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23134252' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-  --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230a1f3d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23dbe9fe' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
 
   /* RGB versions for opacity control */
-  --color-success-rgb: 33, 128, 141;
-  --color-error-rgb: 192, 21, 47;
-  --color-warning-rgb: 168, 75, 47;
-  --color-info-rgb: 98, 108, 113;
+  --color-success-rgb: 11, 99, 197;
+  --color-error-rgb: 200, 30, 74;
+  --color-warning-rgb: 154, 90, 5;
+  --color-info-rgb: 75, 100, 132;
 
   /* Typography */
   --font-family-base: "FKGroteskNeue", "Geist", "Inter", -apple-system,
@@ -148,10 +148,10 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* RGB versions for opacity control (Dark Mode) */
-    --color-gray-400-rgb: 119, 124, 124;
-    --color-teal-300-rgb: 50, 184, 198;
-    --color-gray-300-rgb: 167, 169, 169;
-    --color-gray-200-rgb: 245, 245, 245;
+    --color-gray-400-rgb: 111, 135, 168;
+    --color-teal-300-rgb: 56, 189, 248;
+    --color-gray-300-rgb: 159, 182, 214;
+    --color-gray-200-rgb: 219, 233, 254;
 
     /* Background color tokens (Dark Mode) */
     --color-bg-1: rgba(29, 78, 216, 0.15); /* Dark blue */
@@ -176,7 +176,7 @@
     --color-secondary-active: rgba(var(--color-gray-400-rgb), 0.3);
     --color-border: rgba(var(--color-gray-400-rgb), 0.3);
     --color-error: var(--color-red-400);
-    --color-success: var(--color-teal-300);
+    --color-success: rgba(52, 211, 153, 1);
     --color-warning: var(--color-orange-400);
     --color-info: var(--color-gray-300);
     --color-focus-ring: rgba(var(--color-teal-300-rgb), 0.4);
@@ -194,11 +194,11 @@
     --focus-outline: 2px solid var(--color-primary);
     --status-bg-opacity: 0.15;
     --status-border-opacity: 0.25;
-    --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23134252' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-    --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230a1f3d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23dbe9fe' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
 
     /* RGB versions for dark mode */
-    --color-success-rgb: var(--color-teal-300-rgb);
+    --color-success-rgb: 52, 211, 153;
     --color-error-rgb: var(--color-red-400-rgb);
     --color-warning-rgb: var(--color-orange-400-rgb);
     --color-info-rgb: var(--color-gray-300-rgb);
@@ -208,10 +208,10 @@
 /* Data attribute for manual theme switching */
 [data-color-scheme="dark"] {
   /* RGB versions for opacity control (dark mode) */
-  --color-gray-400-rgb: 119, 124, 124;
-  --color-teal-300-rgb: 50, 184, 198;
-  --color-gray-300-rgb: 167, 169, 169;
-  --color-gray-200-rgb: 245, 245, 245;
+  --color-gray-400-rgb: 111, 135, 168;
+  --color-teal-300-rgb: 56, 189, 248;
+  --color-gray-300-rgb: 159, 182, 214;
+  --color-gray-200-rgb: 219, 233, 254;
 
   /* Colorful background palette - Dark Mode */
   --color-bg-1: rgba(29, 78, 216, 0.15); /* Dark blue */
@@ -236,7 +236,7 @@
   --color-secondary-active: rgba(var(--color-gray-400-rgb), 0.3);
   --color-border: rgba(var(--color-gray-400-rgb), 0.3);
   --color-error: var(--color-red-400);
-  --color-success: var(--color-teal-300);
+  --color-success: rgba(52, 211, 153, 1);
   --color-warning: var(--color-orange-400);
   --color-info: var(--color-gray-300);
   --color-focus-ring: rgba(var(--color-teal-300-rgb), 0.4);
@@ -253,11 +253,11 @@
   --focus-outline: 2px solid var(--color-primary);
   --status-bg-opacity: 0.15;
   --status-border-opacity: 0.25;
-  --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23134252' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
-  --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23f5f5f5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  --select-caret-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%230a1f3d' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  --select-caret-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23dbe9fe' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
 
   /* RGB versions for dark mode */
-  --color-success-rgb: var(--color-teal-300-rgb);
+  --color-success-rgb: 52, 211, 153;
   --color-error-rgb: var(--color-red-400-rgb);
   --color-warning-rgb: var(--color-orange-400-rgb);
   --color-info-rgb: var(--color-gray-300-rgb);
@@ -265,9 +265,9 @@
 
 [data-color-scheme="light"] {
   /* RGB versions for opacity control (light mode) */
-  --color-brown-600-rgb: 94, 82, 64;
-  --color-teal-500-rgb: 33, 128, 141;
-  --color-slate-900-rgb: 19, 52, 59;
+  --color-brown-600-rgb: 63, 92, 134;
+  --color-teal-500-rgb: 11, 99, 197;
+  --color-slate-900-rgb: 10, 31, 61;
   
   /* Semantic Color Tokens (Light Mode) */
   --color-background: var(--color-cream-50);
@@ -285,13 +285,13 @@
   --color-card-border: rgba(var(--color-brown-600-rgb), 0.12);
   --color-card-border-inner: rgba(var(--color-brown-600-rgb), 0.12);
   --color-error: var(--color-red-500);
-  --color-success: var(--color-teal-500);
+  --color-success: rgba(13, 148, 96, 1);
   --color-warning: var(--color-orange-500);
   --color-info: var(--color-slate-500);
   --color-focus-ring: rgba(var(--color-teal-500-rgb), 0.4);
 
   /* RGB versions for light mode */
-  --color-success-rgb: var(--color-teal-500-rgb);
+  --color-success-rgb: 13, 148, 96;
   --color-error-rgb: var(--color-red-500-rgb);
   --color-warning-rgb: var(--color-orange-500-rgb);
   --color-info-rgb: var(--color-slate-500-rgb);
@@ -1012,14 +1012,14 @@ body {
 
 .span-box {
   position: absolute;
-  border: 1px solid rgba(33, 128, 141, 0.35);
-  background: rgba(33, 128, 141, 0.08);
+  border: 1px solid rgba(var(--color-teal-500-rgb), 0.35);
+  background: rgba(var(--color-teal-500-rgb), 0.08);
   cursor: text;
   border-radius: 2px;
   transition: background var(--duration-fast) var(--ease-standard);
 }
 
-.span-box:hover { background: rgba(33, 128, 141, 0.25); border-color: var(--color-primary); }
+.span-box:hover { background: rgba(var(--color-teal-500-rgb), 0.25); border-color: var(--color-primary); }
 
 /* What a scan found, marked on the page itself. Amber while it is only a
    proposal; struck through and faded once deselected, so "everything still
@@ -1172,7 +1172,7 @@ body {
 .draw-ghost {
   position: absolute;
   border: 2px dashed var(--color-primary);
-  background: rgba(33, 128, 141, 0.15);
+  background: rgba(var(--color-teal-500-rgb), 0.15);
   pointer-events: none;
 }
 
@@ -1196,7 +1196,7 @@ body {
   user-select: none;
 }
 
-.placed-item:hover { border-color: var(--color-primary); background: rgba(33, 128, 141, 0.08); }
+.placed-item:hover { border-color: var(--color-primary); background: rgba(var(--color-teal-500-rgb), 0.08); }
 .placed-item img { width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
 .placed-item span { white-space: nowrap; pointer-events: none; line-height: 1; }
 
@@ -1391,7 +1391,7 @@ body {
 }
 
 .diff-new {
-  background: rgba(33, 128, 141, 0.12);
+  background: rgba(var(--color-teal-500-rgb), 0.12);
   border-left: 3px solid var(--color-success);
   padding: var(--space-4) var(--space-8);
 }
@@ -1986,7 +1986,7 @@ body {
   content: "";
   position: absolute;
   inset: 0;
-  border: 2px dashed rgba(33, 128, 141, 0.4);
+  border: 2px dashed rgba(var(--color-teal-500-rgb), 0.4);
   border-radius: var(--radius-base);
   pointer-events: none;
 }
@@ -2048,24 +2048,7 @@ body {
   background: rgba(var(--color-warning-rgb, 168, 75, 47), 0.22);
 }
 
-/* ---- DSC panel: token mode and drawing the signature area ---------- */
-.sub-tabs--tight { margin-bottom: var(--space-12); }
-.sub-tabs--tight .sub-tab { padding: var(--space-6) var(--space-10); font-size: var(--font-size-sm); }
 
-.form-actions--split { display: flex; gap: var(--space-8); margin-bottom: var(--space-8); }
-.form-actions--split > * { flex: 1; text-align: center; }
-
-#dsc-draw { margin-top: var(--space-8); }
-
-/* While a signature box is being dragged the overlay takes the pointer,
-   so a click cannot land on a form field underneath by accident. */
-.overlay--picking { cursor: crosshair; }
-.draw-box {
-    position: absolute;
-    border: 2px dashed var(--color-primary, #218089);
-    background: rgba(33, 128, 141, 0.14);
-    pointer-events: none;
-}
 
 /* ---- verifying a signature already on a document ------------------- */
 .verify-card {
@@ -2161,4 +2144,102 @@ body {
     background: var(--color-primary);
     color: var(--color-btn-primary-text, #fff);
     font-size: var(--font-size-xs);
+}
+
+/* ==================================================================== */
+/* Cyber blue                                                           */
+/*                                                                      */
+/* The palette above already carries the colour; what follows is the    */
+/* character - a lit ground, a glow on the things that matter, and a    */
+/* hairline that catches the eye along the top. Kept restrained on      */
+/* purpose: this is used for hours at a time on audit work, not for     */
+/* five minutes on a demo.                                              */
+/* ==================================================================== */
+
+/* A ground that is lit rather than flat. Fixed, so it does not slide
+   about as a long document scrolls. */
+body {
+    background-color: var(--color-background);
+    background-image:
+        radial-gradient(900px 520px at 12% -8%, rgba(56, 189, 248, 0.10), transparent 60%),
+        radial-gradient(760px 460px at 92% 4%, rgba(11, 99, 197, 0.10), transparent 62%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+}
+[data-color-scheme="dark"] body,
+:root:not([data-color-scheme="light"]) body {
+    background-image:
+        radial-gradient(1000px 560px at 10% -10%, rgba(56, 189, 248, 0.16), transparent 62%),
+        radial-gradient(820px 500px at 94% 2%, rgba(30, 64, 175, 0.24), transparent 64%);
+}
+
+/* The header carries the one bright line in the design. */
+.header {
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, var(--color-primary) 7%, var(--color-surface)),
+            var(--color-surface));
+    border-bottom: 1px solid transparent;
+    box-shadow: 0 1px 0 0 color-mix(in srgb, var(--color-primary) 38%, transparent),
+                0 6px 22px -18px rgba(2, 26, 61, 0.9);
+}
+.header__title { letter-spacing: var(--letter-spacing-tight); }
+.header__logo { filter: drop-shadow(0 0 6px color-mix(in srgb, var(--color-primary) 45%, transparent)); }
+
+/* The tab you are on glows rather than merely underlining. */
+.tab-btn.active {
+    box-shadow: inset 0 -3px 0 0 var(--color-primary),
+                0 6px 16px -12px color-mix(in srgb, var(--color-primary) 90%, transparent);
+    background: color-mix(in srgb, var(--color-primary) 8%, var(--color-surface));
+}
+.tab-btn:focus-visible { outline: var(--focus-outline); outline-offset: -2px; }
+
+/* Primary actions read as live. */
+.btn--primary {
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset,
+                0 4px 14px -8px color-mix(in srgb, var(--color-primary) 85%, transparent);
+}
+.btn--primary:hover {
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.14) inset,
+                0 6px 20px -8px color-mix(in srgb, var(--color-primary) 95%, transparent);
+}
+
+/* Cards lift towards the accent instead of towards grey. */
+.dash-card:hover,
+.tool-card:hover {
+    border-color: color-mix(in srgb, var(--color-primary) 45%, transparent);
+    box-shadow: 0 10px 26px -18px color-mix(in srgb, var(--color-primary) 90%, transparent);
+}
+
+/* The page itself stays white paper on the dark ground - a scan of a
+   bank statement must not be tinted by the theme. */
+.page-image, .page-card img, .thumb-rail img {
+    background: #fff;
+}
+
+/* The workspace status light, and the busy bar, take the accent. */
+.engine-dot { box-shadow: 0 0 8px currentColor; }
+
+
+/* The hero used the green background token, which stood out as the one
+   green thing on a blue page. */
+.hero {
+    background:
+        linear-gradient(180deg,
+            color-mix(in srgb, var(--color-primary) 12%, transparent),
+            transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-primary) 22%, transparent);
+}
+.hero h2 {
+    background: linear-gradient(92deg, var(--color-text), var(--color-primary));
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+}
+@supports not (background-clip: text) {
+    .hero h2 { color: var(--color-text); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    body { background-attachment: scroll; }
 }
