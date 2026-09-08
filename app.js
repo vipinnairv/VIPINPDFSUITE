@@ -11,56 +11,54 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.30.0';
+const APP_VERSION = '4.31.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
 
 class PyEngine {
+    /* The engine itself lives in a worker (engine.worker.js). This class is
+     * only the page's end of the conversation: it starts the worker, keeps
+     * one promise per outstanding call, and passes progress through.
+     *
+     * It used to run Pyodide here in the page, which meant the browser could
+     * not repaint while a document was being worked on. Nothing could show
+     * progress however hard it tried, and on a long job Chrome offered to
+     * kill the tab while the work was going perfectly well. */
     constructor() {
-        this.pyodide = null;
-        this.module = null;
+        this.worker = null;
         this.ready = false;
         this.error = null;
         this._promise = null;
+        this._pending = new Map();
+        this._nextId = 1;
         this.onStep = null;
+        this.onWork = null;          // told how a running job is going
         this.lastMessage = 'Getting things ready…';
         this.lastPct = 0;
     }
 
-    /** Boot the engine. Safe to await from anywhere; only runs once.
-     *
-     * Progress is reported through `onStep`, which can be attached after boot
-     * has already started - that lets the download begin the moment this file
-     * parses, rather than waiting for DOMContentLoaded and the UI wiring.
-     */
     boot() {
-        if (!this._promise) this._promise = this._boot((msg, pct) => this._report(msg, pct));
+        if (!this._promise) this._promise = this._boot();
         return this._promise;
+    }
+
+    /** Throw away a failed start so Try again really tries again. */
+    reset() {
+        if (this.worker) {
+            try { this.worker.terminate(); } catch (err) { /* already gone */ }
+        }
+        this.worker = null;
+        this.ready = false;
+        this.error = null;
+        this._promise = null;
+        this._failPending(new Error('The engine was restarted.'));
     }
 
     _report(message, pct) {
         this.lastMessage = message;
         this.lastPct = pct;
         if (this.onStep) this.onStep(message, pct);
-    }
-
-    /** Approximate the wheel download for the progress bar.
-     *
-     * loadPackage() owns the actual fetch - it is the only thing that reliably
-     * installs the package, and prefetching separately made the browser
-     * download all 17 MB twice (loadPackage treats a path as a URL, so it
-     * cannot be handed bytes, and HTTP-cache dedupe is not dependable). So the
-     * bar is advanced on a timer sized to the payload instead, and snaps to
-     * completion when the install actually returns.
-     */
-    _fakeProgress(from, to, expectedMs, onStep, label) {
-        const started = Date.now();
-        const timer = setInterval(() => {
-            const frac = Math.min(0.97, (Date.now() - started) / expectedMs);
-            onStep(label, from + (to - from) * frac);
-        }, 250);
-        return () => clearInterval(timer);
     }
 
     /** Say honestly how the one big download is going.
@@ -73,16 +71,13 @@ class PyEngine {
      *    dedupes the second request.
      *  - loadPackage will not take a blob URL; it derives the package name
      *    from the filename and a blob URL has none.
-     *  - Wrapping window.fetch sees nothing: Pyodide does not fetch the
-     *    wheel through it, as a probe of every URL that passes through
-     *    window.fetch confirmed.
+     *  - Wrapping fetch sees nothing: Pyodide does not fetch the wheel
+     *    through it, as a probe of every URL that passes through confirmed.
      *
      * So the size is not knowable from here. What is knowable is how long it
-     * has been going, and that is what gets shown - with the bar left
-     * indeterminate rather than creeping to 97% and sitting there, which is
-     * what made a stalled download look like an almost-finished one.
+     * has been going, and that is what gets shown.
      */
-    _watchDownload(onStep) {
+    _watchDownload() {
         const started = Date.now();
         const tick = setInterval(() => {
             const secs = Math.round((Date.now() - started) / 1000);
@@ -90,56 +85,89 @@ class PyEngine {
             const mins = Math.floor(secs / 60);
             const elapsed = mins ? `${mins} min ${secs % 60}s` : `${secs}s`;
             if (secs < 90) {
-                onStep(`Downloading PDF tools (17.5 MB, one time) - ${elapsed} so far`, -1);
+                this._report(`Downloading PDF tools (17.5 MB, one time) - ${elapsed} so far`, -1);
             } else if (secs < 240) {
-                onStep(`Still downloading (17.5 MB, one time) - ${elapsed} so far. ` +
-                       'A slow connection can take a few minutes.', -1);
+                this._report(`Still downloading (17.5 MB, one time) - ${elapsed} so far. ` +
+                             'A slow connection can take a few minutes.', -1);
             } else {
-                onStep(`This is taking unusually long - ${elapsed} so far. ` +
-                       'The download may have stalled; you can wait or try again.', -1);
+                this._report(`This is taking unusually long - ${elapsed} so far. ` +
+                             'The download may have stalled; you can wait or try again.', -1);
             }
         }, 1000);
         return () => clearInterval(tick);
     }
 
-    async _boot(onStep = () => {}) {
-        try {
-            onStep('Setting up your workspace…', 5);
-            let stop = this._fakeProgress(5, 45, 12000, onStep, 'Setting up your workspace…');
-            this.pyodide = await loadPyodide({ indexURL: PYODIDE_INDEX });
-            stop();
-
-            onStep('Downloading PDF tools (17.5 MB, one time)…', -1);
-            const unwatch = this._watchDownload(onStep);
+    _boot() {
+        return new Promise((resolve, reject) => {
+            let unwatch = () => {};
             try {
-                await this.pyodide.loadPackage(PYMUPDF_WHEEL);
-            } finally {
-                unwatch();
+                this.worker = new Worker(`engine.worker.js?v=${APP_VERSION}`, { type: 'module' });
+            } catch (err) {
+                this.error = err;
+                return reject(err);
             }
 
-            onStep('Almost ready…', 90);
-            const source = await (await fetch(`pdf_engine.py?v=${APP_VERSION}`)).text();
-            this.pyodide.FS.writeFile('/pdf_engine.py', source);
-            this.pyodide.runPython('import sys\nif "/" not in sys.path: sys.path.insert(0, "/")');
-            this.module = this.pyodide.pyimport('pdf_engine');
+            this.worker.onmessage = (event) => {
+                const msg = event.data || {};
+                if (msg.type === 'progress') {
+                    if (/Downloading PDF tools/.test(msg.message)) unwatch = this._watchDownload();
+                    this._report(msg.message, msg.pct);
+                    return;
+                }
+                if (msg.type === 'step') {
+                    // A long job saying where it has got to.
+                    if (this.onWork) this.onWork(msg.done, msg.total, msg.label);
+                    return;
+                }
+                if (msg.type === 'ready') {
+                    unwatch();
+                    this.ready = true;
+                    return resolve(this);
+                }
+                if (msg.type === 'bootfailed') {
+                    unwatch();
+                    this.error = new Error(msg.error);
+                    console.error('Engine failed to start:', msg.error);
+                    return reject(this.error);
+                }
+                const waiting = this._pending.get(msg.id);
+                if (!waiting) return;
+                this._pending.delete(msg.id);
+                if (msg.ok) waiting.resolve(msg.result);
+                else waiting.reject(new Error(msg.error));
+            };
+            this.worker.onerror = (event) => {
+                unwatch();
+                this.error = new Error(event.message || 'The engine stopped unexpectedly.');
+                // Anything already in flight will never be answered now, so
+                // fail it rather than leaving the overlay spinning forever.
+                this._failPending(this.error);
+                reject(this.error);
+            };
 
-            onStep('Ready', 100);
-            this.ready = true;
-            return this;
-        } catch (err) {
-            this.error = err;
-            console.error('Engine failed to start:', err);
-            throw err;
-        }
+            fetch(`pdf_engine.py?v=${APP_VERSION}`)
+                .then((r) => r.text())
+                .then((engineSource) => this.worker.postMessage({
+                    type: 'boot', indexURL: PYODIDE_INDEX, wheel: PYMUPDF_WHEEL, engineSource,
+                }))
+                .catch(reject);
+        });
+    }
+
+    /** Reject every outstanding call. Used when the worker goes away. */
+    _failPending(err) {
+        for (const waiting of this._pending.values()) waiting.reject(err);
+        this._pending.clear();
     }
 
     /** Call a function in pdf_engine.py. Engine exceptions surface as JS errors. */
     async call(fn, ...args) {
         if (!this.ready) await this.boot();
-        const target = this.module[fn];
-        if (!target) throw new Error(`pdf_engine has no function '${fn}'`);
-        const result = target(...args);
-        return this._unwrap(result);
+        const id = this._nextId++;
+        return new Promise((resolve, reject) => {
+            this._pending.set(id, { resolve, reject });
+            this.worker.postMessage({ type: 'call', id, fn, args });
+        });
     }
 
     /** Same as call(), but parses a JSON string result. */
@@ -173,22 +201,6 @@ class PyEngine {
                 retry = true;
             }
         }
-    }
-
-    _unwrap(value) {
-        if (value && typeof value.toJs === 'function') {
-            const converted = value.toJs({ create_pyproxies: false });
-            value.destroy();
-            return converted;
-        }
-        if (value && typeof value.getBuffer === 'function') {
-            const buf = value.getBuffer();
-            const copy = new Uint8Array(buf.data);
-            buf.release();
-            value.destroy();
-            return copy;
-        }
-        return value;
     }
 }
 
@@ -617,9 +629,10 @@ const UI = {
                     fill.style.background = '';
                     fill.style.width = '0%';
                     badge.className = 'engine-badge engine-badge--loading';
-                    engine.ready = false;
-                    engine.error = null;
-                    engine._booting = null;
+                    // _booting was never the name of the field, so the old
+                    // retry re-awaited the promise that had already failed and
+                    // reported the same error again without trying anything.
+                    engine.reset();
                     this.bootEngine();
                 };
             }
@@ -705,6 +718,7 @@ const UI = {
         // On first use the engine may still be arriving; say so rather than
         // showing a task message that looks stuck.
         this.busy(engine.ready ? message : this.bootMessage);
+        const stop = this.trackWork(message);
         try {
             return await job();
         } catch (err) {
@@ -714,8 +728,58 @@ const UI = {
             this.toast(this.explain(err), 'error');
             return null;
         } finally {
+            stop();
             this.idle();
         }
+    },
+
+    /** Keep the overlay honest while a job runs.
+     *
+     * Two things are shown, and neither is invented. Where the engine reports
+     * pages - shrinking images, reading a page, measuring one - the bar is
+     * that count. Everywhere else there is no count to be had, so the bar is
+     * left indeterminate and the seconds are shown instead, which at least
+     * says the work is still going. Silence was the complaint: the app looked
+     * asleep while it was busy.
+     */
+    trackWork(message) {
+        const started = Date.now();
+        const bar = $('progress-bar');
+        const fill = $('progress-fill');
+        const text = $('progress-text');
+        let counted = false;
+
+        engine.onWork = (done, total, label) => {
+            counted = true;
+            const pct = total > 0 ? Math.min(99, Math.round((done / total) * 100)) : 0;
+            bar.classList.remove('hidden', 'progress-bar--unknown');
+            fill.style.width = `${pct}%`;
+            text.textContent = `${pct}%`;
+            $('status-text').textContent = total > 1
+                ? `${label || message} ${done + 1} of ${total}`
+                : (label || message);
+        };
+
+        // Until a count arrives - and for the many jobs that have none - say
+        // how long it has been going rather than nothing at all.
+        const tick = setInterval(() => {
+            if (counted) return;
+            const secs = Math.round((Date.now() - started) / 1000);
+            if (secs < 2) return;
+            bar.classList.remove('hidden');
+            bar.classList.add('progress-bar--unknown');
+            text.textContent = '';
+            $('status-text').textContent = `${message} ${secs}s`;
+        }, 500);
+
+        return () => {
+            clearInterval(tick);
+            engine.onWork = null;
+            bar.classList.add('hidden');
+            bar.classList.remove('progress-bar--unknown');
+            fill.style.width = '0%';
+            text.textContent = '0%';
+        };
     },
 };
 

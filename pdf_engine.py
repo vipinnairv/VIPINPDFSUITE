@@ -251,6 +251,33 @@ def _page_indices(doc, spec):
 
 
 # --------------------------------------------------------------------------
+# saying how far along a long job is
+# --------------------------------------------------------------------------
+
+# The page cannot see inside a loop that runs for half a minute, so the loops
+# say where they have got to. Set by the worker at startup; absent when the
+# engine is used from a test, where it costs nothing.
+_PROGRESS = None
+
+
+def set_progress_hook(hook):
+    """Register something to be told how a long job is going."""
+    global _PROGRESS
+    _PROGRESS = hook
+    return True
+
+
+def _progress(done, total, label=""):
+    """Report one step. Never lets a reporting problem break the work."""
+    if _PROGRESS is None:
+        return
+    try:
+        _PROGRESS(int(done), int(total), str(label))
+    except Exception:
+        pass
+
+
+# --------------------------------------------------------------------------
 # document lifecycle
 # --------------------------------------------------------------------------
 
@@ -730,6 +757,7 @@ def search_text(doc_id, needle, context=48):
     term = str(needle)
     hits = []
     for pno, page in enumerate(doc):
+        _progress(pno, doc.page_count, "Reading page")
         pw, ph = page.rect.width, page.rect.height
         for r in page.search_for(term):
             # The whole line the hit sits on, taken from the page rather than
@@ -860,6 +888,7 @@ def compress(doc_id, level="medium"):
     quality, max_dpi = presets.get(level, presets["medium"])
 
     for pno in range(doc.page_count):
+        _progress(pno, doc.page_count, "Shrinking images")
         page = doc[pno]
         for info in page.get_images(full=True):
             xref = info[0]
@@ -2861,7 +2890,8 @@ def content_bounds(doc_id, pages_json="", tolerance=12, padding_pt=6):
     upright_at = pymupdf.Matrix(_TRIM_SCALE, _TRIM_SCALE)
     sideways_at = pymupdf.Matrix(_TRIM_SCALE, _TRIM_SCALE).prerotate(90)
 
-    for pno in wanted:
+    for order, pno in enumerate(wanted):
+        _progress(order, len(wanted), "Measuring page")
         index = int(pno)
         if not 0 <= index < doc.page_count:
             continue
@@ -3003,6 +3033,7 @@ def export_images(doc_id):
     out = []
     seen = set()
     for pno in range(doc.page_count):
+        _progress(pno, doc.page_count, "Collecting images")
         for info in doc[pno].get_images(full=True):
             xref = info[0]
             if xref in seen:

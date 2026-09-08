@@ -11,7 +11,7 @@
  *   ENGINE  large, immutable, keyed by URL so it survives releases untouched
  */
 
-const VERSION = '4.30.0';
+const VERSION = '4.31.0';
 const SHELL_CACHE = `miyee-shell-${VERSION}`;
 const ENGINE_CACHE = 'miyee-engine-v1';
 
@@ -22,6 +22,7 @@ const SHELL_ASSETS = [
     `./app.js?v=${VERSION}`,
     `./style.css?v=${VERSION}`,
     `./pdf_engine.py?v=${VERSION}`,
+    `./engine.worker.js?v=${VERSION}`,
     './logo.svg',
     './favicon.svg',
     './favicon.ico',
