@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.29.0';
+const APP_VERSION = '4.30.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -1344,17 +1344,88 @@ const EditTool = {
             el.style.lineHeight = `${boxHeight}px`;
         }
 
+        // Size and width are the two things you reach for when the wording
+        // changes length, so they sit on the box rather than in a panel
+        // somewhere else. Both preview live: what is on screen while typing
+        // is what gets written into the page.
+        const state = { size: item.size, width: 0, origWidth: item.wFrac };
+
         const tag = document.createElement('div');
         tag.className = 'inline-edit__tag';
         tag.style.left = `${item.xFrac * 100}%`;
         tag.style.top = `${item.yFrac * 100}%`;
-        tag.textContent = `${item.font} · ${item.size}pt`
-            + (spec.exact ? '' : ' · lookalike')
-            + (isBlock ? ' - Ctrl+Enter to apply, Esc to cancel'
-                       : ' - Enter to apply, Esc to cancel');
+
+        const label = document.createElement('span');
+        const describe = () => {
+            label.textContent = `${item.font} · ${state.size.toFixed(1)}pt`
+                + (spec.exact ? '' : ' · lookalike');
+        };
+        const smaller = document.createElement('button');
+        smaller.type = 'button';
+        smaller.className = 'inline-edit__step';
+        smaller.textContent = 'A−';
+        smaller.title = 'Smaller (Ctrl+[)';
+        const bigger = document.createElement('button');
+        bigger.type = 'button';
+        bigger.className = 'inline-edit__step';
+        bigger.textContent = 'A+';
+        bigger.title = 'Larger (Ctrl+])';
+
+        const applySize = (next) => {
+            state.size = Math.max(4, Math.min(96, Math.round(next * 2) / 2));
+            el.style.fontSize = `${Math.max(state.size * scale, 7)}px`;
+            if (!isBlock) {
+                // The single-line box is sized to its type, so it has to grow
+                // with it or the letters get clipped as they get bigger.
+                const line = Math.max(state.size * scale * 1.25, 8);
+                el.style.height = `${line}px`;
+                el.style.lineHeight = `${line}px`;
+            }
+            describe();
+        };
+        smaller.addEventListener('mousedown', (e) => { e.preventDefault(); applySize(state.size - 0.5); });
+        bigger.addEventListener('mousedown', (e) => { e.preventDefault(); applySize(state.size + 0.5); });
+        describe();
+
+        const help = document.createElement('span');
+        help.className = 'inline-edit__help';
+        help.textContent = isBlock ? 'Ctrl+Enter applies · Esc cancels'
+                                   : 'Enter applies · Esc cancels · drag the edge to widen';
+        tag.append(smaller, bigger, label, help);
+
+        // Drag the right edge, the way a text box behaves in Acrobat. The
+        // text rewraps as it goes, so the result is visible before it is
+        // committed rather than after.
+        const grip = document.createElement('div');
+        grip.className = 'inline-edit__grip';
+        grip.title = 'Drag to change how much room the text has';
+        grip.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const startX = e.clientX;
+            const startW = el.getBoundingClientRect().width;
+            const move = (ev) => {
+                const width = Math.max(24, startW + (ev.clientX - startX));
+                state.width = width / scale;          // back into PDF points
+                el.style.width = `${(width / img.clientWidth) * 100}%`;
+            };
+            const up = () => {
+                window.removeEventListener('mousemove', move);
+                window.removeEventListener('mouseup', up);
+                el.focus({ preventScroll: true });
+            };
+            window.addEventListener('mousemove', move);
+            window.addEventListener('mouseup', up);
+        });
+        el.appendChild(grip);
 
         el.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') { e.preventDefault(); this.cancelEdit(); return; }
+            if ((e.ctrlKey || e.metaKey) && (e.key === '[' || e.key === ']')) {
+                e.preventDefault();
+                applySize(state.size + (e.key === ']' ? 0.5 : -0.5));
+                return;
+            }
             if (e.key !== 'Enter') return;
             // A paragraph can hold line breaks, so it commits deliberately.
             if (isBlock && !(e.ctrlKey || e.metaKey)) return;
@@ -1369,7 +1440,7 @@ const EditTool = {
         el.addEventListener('blur', () => this.commitEdit());
 
         box.style.visibility = 'hidden';
-        this.editing = { item, isBlock, el, tag, box, done: false };
+        this.editing = { item, isBlock, el, tag, box, state, done: false };
         this.view.overlay.append(el, tag);
 
         el.focus({ preventScroll: true });
@@ -1422,13 +1493,21 @@ const EditTool = {
         if (ctx.adding) return this.commitAdd();
         ctx.done = true;
 
+        // The grip is inside the box, so its text must not become part of it.
+        const grip = ctx.el.querySelector('.inline-edit__grip');
+        if (grip) grip.remove();
         const raw = ctx.el.innerText.replace(/\u00a0/g, ' ').replace(/\s+$/, '');
         // A span is a single line, so anything typed across lines is joined.
         const next = ctx.isBlock ? raw : raw.replace(/\s*\n\s*/g, ' ');
         const item = ctx.item;
         const isBlock = ctx.isBlock;
+        const state = ctx.state || { size: item.size, width: 0 };
         this.closeEditor();
-        if (next === item.text) return;
+        // The wording is not the only thing that can change. Bailing out
+        // whenever the text matched meant a size change or a dragged box was
+        // reported as applied and then quietly thrown away.
+        const resized = Math.abs(state.size - item.size) > 0.01 || state.width > 0;
+        if (next === item.text && !resized) return;
 
         // Emptying the box deletes the text. This used to do nothing at all,
         // silently, leaving no way to remove a line. Deletion is worth
@@ -1449,20 +1528,32 @@ const EditTool = {
             // region has to be painted over before the new wording is drawn.
             const res = await engine.callJSON(isBlock ? 'edit_block' : 'edit_text',
                                               this.view.docId, this.view.page, item.bbox,
-                                              next, item.font, item.size,
+                                              next, item.font, state.size,
                                               item.colorInt, item.flags,
                                               ...(isBlock ? [true, this.coverPixels]
-                                                          : [this.coverPixels]));
+                                                          : [this.coverPixels,
+                                                             // the baseline, the room asked
+                                                             // for, and the wording being
+                                                             // replaced - the last so its
+                                                             // letter spacing can be matched
+                                                             JSON.stringify(item.origin || []),
+                                                             state.width || 0,
+                                                             item.text,
+                                                             item.alpha === undefined ? 1 : item.alpha,
+                                                             0, item.size]));
             await this.view.render();
             await this.refreshHistory();
             if (deleting) return UI.toast('Text deleted from the page', 'success');
             const face = res.exact
                 ? `kept ${item.font}`
                 : 'matched with a similar font';
+            const lines = res.lines > 1 ? `, wrapped onto ${res.lines} lines` : '';
+            const shrunk = res.shrunk ? ', shrunk to stay on the page' : '';
+            const spacing = res.spacingLost ? ' - the original was letter-spaced, so this sits narrower' : '';
             UI.toast(isBlock
                 ? (res.grew ? `Paragraph rewritten at ${res.size}pt, box grew to fit - ${face}`
                             : `Paragraph rewrapped at ${res.size}pt - ${face}`)
-                : `Text replaced - ${face}`, 'success');
+                : `Text replaced at ${res.size}pt${lines}${shrunk} - ${face}${spacing}`, 'success');
         });
     },
 

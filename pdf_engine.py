@@ -426,6 +426,7 @@ def get_spans(doc_id, pno):
                 if not text.strip():
                     continue
                 x0, y0, x1, y1 = span["bbox"]
+                origin = span.get("origin") or [x0, y1]
                 spans.append({
                     "text": text,
                     "font": span["font"],
@@ -433,6 +434,14 @@ def get_spans(doc_id, pno):
                     "colorInt": span["color"],
                     "flags": span["flags"],
                     "bbox": [x0, y0, x1, y1],
+                    # The baseline the glyphs actually sit on. Writing the
+                    # replacement from the bottom of the box instead drops it
+                    # by the depth of the descender, which is exactly the sort
+                    # of shift that makes an edit obvious.
+                    "origin": [origin[0], origin[1]],
+                    "ascender": round(span.get("ascender", 0.8), 4),
+                    "descender": round(span.get("descender", -0.2), 4),
+                    "alpha": round(span.get("alpha", 255) / 255.0, 3),
                     # fractions so the UI can place an overlay without knowing PDF units
                     "xFrac": x0 / pw, "yFrac": y0 / ph,
                     "wFrac": (x1 - x0) / pw, "hFrac": (y1 - y0) / ph,
@@ -463,12 +472,115 @@ def get_web_font(doc_id, pno, font_name):
     return b""
 
 
+# Below this, the difference between where a glyph lands and where the
+# original sat is under a fifth of a point - invisible, and not worth the
+# extra text objects that per-character placement costs.
+_TRACKING_FLOOR = 0.15
+
+
+def _measure(font, text, size):
+    """How wide a run of text is."""
+    return font.text_length(text, size) if text else 0.0
+
+
+def _wrap_to_width(text, font, size, width):
+    """Break text into lines that fit, honouring newlines already in it.
+
+    A word longer than the whole line is left alone rather than chopped: a
+    forty-character account number is better hanging over the edge than cut
+    in half.
+    """
+    if width <= 0:
+        return [text]
+    lines = []
+    for paragraph in str(text).split("\n"):
+        words = paragraph.split(" ")
+        current = ""
+        for word in words:
+            trial = f"{current} {word}" if current else word
+            if current and _measure(font, trial, size) > width:
+                lines.append(current)
+                current = word
+            else:
+                current = trial
+        lines.append(current)
+    return lines or [""]
+
+
+def _draw_run(page, x, baseline, text, font_name, size, colour, alpha=1.0):
+    """Draw one line of text sitting on a baseline, as a single text object.
+
+    Placing the characters one at a time would let the original's letter
+    spacing be reproduced, and it was written that way first. It is not worth
+    it: every character then extracts as its own span, which breaks copying,
+    searching and - the reason it matters most here - reading the numbers out
+    of a statement into a spreadsheet. One run stays one run.
+    """
+    page.insert_text((x, baseline), text, fontsize=size, fontname=font_name,
+                     color=colour, fill_opacity=alpha)
+
+
+def _original_tracking(measurer, original_text, size, width):
+    """How much wider the original sat than its own font would draw it.
+
+    Not used to draw with - see _draw_run - but worth knowing. A letter-spaced
+    heading rewritten at its natural width comes out visibly narrower, and the
+    caller can say so rather than leave it to be noticed.
+    """
+    if not original_text or size <= 0 or width <= 0:
+        return 0.0
+    try:
+        natural = measurer.text_length(original_text, size)
+    except Exception:
+        return 0.0
+    if natural <= 0:
+        return 0.0
+    gap = (width - natural) / max(len(original_text) - 1, 1)
+    return gap if abs(gap) >= _TRACKING_FLOOR else 0.0
+
+
+def _room_to_the_right(page, rect):
+    """How far the text can run before it meets the next thing on its line.
+
+    A label in a table can usually take a few more characters without
+    disturbing anything, and wrapping it onto a second line - or shrinking it
+    - would look far more edited than letting it grow into the empty space
+    that is already there. So the space is measured rather than assumed.
+    """
+    limit = page.rect.x1 - 6
+    middle = (rect.y0 + rect.y1) / 2
+    for block in page.get_text("dict")["blocks"]:
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line["spans"]:
+                if not span["text"].strip():
+                    continue
+                sx0, sy0, _sx1, sy1 = span["bbox"]
+                # On the same line, and starting after this text ends.
+                if sy0 <= middle <= sy1 and sx0 >= rect.x1 - 0.5:
+                    limit = min(limit, sx0 - 1.0)
+    return max(limit, rect.x1)
+
+
 def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
-              flags=0, cover=False):
-    """Replace the text in one span, keeping the original look.
+              flags=0, cover=False, origin_json="", width=0.0,
+              original_text="", alpha=1.0, leading=0.0, original_size=0.0):
+    """Replace the text in one span so the page does not look edited.
 
     The old glyphs are genuinely removed from the content stream (redaction),
-    then the replacement is drawn with matched font, size and colour.
+    then the replacement is drawn to sit where the original sat.
+
+    Four things decide whether an edit is spotted. The face - the document's
+    own embedded font is reused when it carries the characters being typed.
+    The baseline - taken from the span itself rather than guessed from the
+    bottom of its box, which is what used to drop a line by a point or so.
+    The size - the original's, unless the caller asks for another. And the
+    letter spacing, reproduced when the original had any.
+
+    `width` is the room the text has. Longer wording wraps inside it rather
+    than being silently shrunk to fit, which is the other thing that gives an
+    edit away.
 
     `cover` is for scanned pages. There the words you see are pixels in an
     image, and the text objects are only the invisible layer OCR added on top:
@@ -499,20 +611,67 @@ def edit_text(doc_id, pno, bbox, new_text, font_name="", size=0, color_int=0,
                        width=0, overlay=True)
 
     if not new_text:
-        return json.dumps({"ok": True, "font": "", "exact": False, "covered": bool(cover)})
+        return json.dumps({"ok": True, "font": "", "exact": False, "covered": bool(cover),
+                           "lines": 0, "size": 0, "tracking": 0})
 
     font, measurer, exact = _register_font(page, buf, font_name, flags)
     size = float(size) or (rect.height * 0.8)
-    size = _fit_size(new_text, font, size, rect.width * 1.15, measurer)
-    page.insert_text(
-        (rect.x0, rect.y1 - size * 0.22),
-        new_text,
-        fontsize=size,
-        fontname=font,
-        color=_int_to_rgb(int(color_int)),
-    )
-    return json.dumps({"ok": True, "font": font_name if exact else _pick_font(font_name, int(flags or 0)),
-                       "exact": exact, "size": round(size, 1), "covered": bool(cover)})
+
+    # Where the original sat. The span's own baseline when the caller passes
+    # it; otherwise the old estimate from the bottom of the box.
+    try:
+        origin = json.loads(origin_json) if origin_json else None
+    except Exception:
+        origin = None
+    if origin and len(origin) == 2:
+        start_x, baseline = float(origin[0]), float(origin[1])
+    else:
+        start_x, baseline = rect.x0, rect.y1 - size * 0.22
+
+    # Measured against the size the original was set at, not the size being
+    # written: asking for 8pt where the original was 18pt used to produce a
+    # nonsense spacing of nearly six points and scatter the letters.
+    tracking = _original_tracking(measurer, str(original_text or ""),
+                                  float(original_size) or float(size), rect.width)
+
+    # A width of zero means the box was never resized, so the text keeps the
+    # room it already had: at least what the original occupied when measured
+    # in the font about to be used - the metrics rarely agree to the last
+    # decimal, and a hair of disagreement used to wrap a heading onto two
+    # lines - plus whatever empty space follows it on the line.
+    if float(width) > 0:
+        room = float(width)
+    else:
+        natural = _measure(measurer, str(original_text or new_text), size)
+        room = max(rect.width, natural + 0.5, _room_to_the_right(page, rect) - start_x)
+    lines = _wrap_to_width(new_text, measurer, size, room)
+
+    # Only as a last resort. Shrinking the type to fit is the classic tell of
+    # an edited PDF, so it happens just when a single word cannot be broken
+    # and would otherwise run off the page.
+    edge = page.rect.x1 - 6
+    shrunk = False
+    while size > 4 and any(start_x + _measure(measurer, ln, size) > edge
+                           for ln in lines):
+        size -= 0.5
+        shrunk = True
+        lines = _wrap_to_width(new_text, measurer, size, room)
+
+    step = float(leading) or size * 1.2
+    for index, line in enumerate(lines):
+        _draw_run(page, start_x, baseline + index * step, line, font, size,
+                  _int_to_rgb(int(color_int)),
+                  max(0.0, min(float(alpha or 1.0), 1.0)))
+
+    return json.dumps({"ok": True,
+                       "font": font_name if exact else _pick_font(font_name, int(flags or 0)),
+                       "exact": exact, "size": round(size, 2), "covered": bool(cover),
+                       "lines": len(lines), "shrunk": shrunk,
+                       # The original was letter-spaced and the replacement is
+                       # not, so it will sit narrower. Said plainly rather than
+                       # left to be spotted.
+                       "spacingLost": abs(tracking) >= _TRACKING_FLOOR,
+                       "tracking": round(tracking, 3)})
 
 
 def insert_text(doc_id, pno, x_frac, y_frac, text, size=12, color="#000000",
