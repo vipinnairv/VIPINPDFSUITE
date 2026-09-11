@@ -11,7 +11,7 @@
 
 // Keep in step with the ?v= query on the script/style tags in index.html so a
 // redeploy never leaves a browser running a stale mix of old and new assets.
-const APP_VERSION = '4.31.0';
+const APP_VERSION = '4.32.0';
 const PYODIDE_VERSION = '314.0.5';
 const PYODIDE_INDEX = `https://cdn.jsdelivr.net/pyodide/v${PYODIDE_VERSION}/full/`;
 const PYMUPDF_WHEEL = 'vendor/pymupdf-1.28.2-cp313-abi3-pyemscripten_2025_0_wasm32.whl';
@@ -2914,10 +2914,59 @@ const CompressTool = {
 /* ------------------------------------------------------------------ */
 
 const ProtectTool = {
+    // Every permission the file can grant, paired with its checkbox.
+    PERMS: [
+        ['print', 'perm-print'], ['copy', 'perm-copy'], ['modify', 'perm-modify'],
+        ['annotate', 'perm-annot'], ['forms', 'perm-forms'],
+        ['assemble', 'perm-assemble'], ['accessibility', 'perm-access'],
+    ],
+
     init() {
         $('protect-file').addEventListener('change', (e) => this.open(Array.from(e.target.files)));
-        $('protect-run').addEventListener('click', () => this.encrypt());
+        $('protect-run').addEventListener('click', () => this.apply());
         $('protect-remove').addEventListener('click', () => this.decrypt());
+        for (const el of document.querySelectorAll('input[name="protect-mode"]')) {
+            el.addEventListener('change', () => this.syncMode());
+        }
+        this.syncMode();
+    },
+
+    mode() {
+        return document.querySelector('input[name="protect-mode"]:checked').value;
+    },
+
+    /** The open-password field belongs to one mode only, and the permission
+     *  boxes start from a different place in each: view only means nothing is
+     *  allowed, while a file locked behind a password is usually meant to be
+     *  read and printed by whoever has it. */
+    syncMode() {
+        const viewOnly = this.mode() === 'viewonly';
+        $('protect-open-pw-group').classList.toggle('hidden', viewOnly);
+        $('perm-print').checked = !viewOnly;
+        for (const id of ['perm-copy', 'perm-modify', 'perm-annot', 'perm-forms', 'perm-assemble']) {
+            $(id).checked = false;
+        }
+        $('perm-access').checked = true;
+    },
+
+    /** A restriction password nobody chose.
+     *
+     * It has to exist and it has to differ from the open password, or readers
+     * treat whoever opens the file as its owner and ignore every flag. Nobody
+     * needs to remember this one - the unrestricted original is still on the
+     * device - so it is made long and random rather than guessable.
+     */
+    generatedOwner() {
+        // 16 bytes, base36 in pairs: 32 characters of 128-bit randomness.
+        // PyMuPDF refuses anything over 40 characters, which a longer one hit.
+        const bytes = new Uint8Array(16);
+        crypto.getRandomValues(bytes);
+        return [...bytes].map((b) => b.toString(36).padStart(2, '0')).join('');
+    },
+
+    /** The seven allow_* arguments restrict() expects, in its own order. */
+    args() {
+        return this.PERMS.map(([, id]) => $(id).checked);
     },
 
     async open(files) {
@@ -2931,30 +2980,74 @@ const ProtectTool = {
             const bytes = await fileToBytes(file);
             const info = await engine.openDoc('protect', bytes, file.name);
             $('protect-workspace').classList.remove('hidden');
+            // Worth saying if the file already carries restrictions: it is the
+            // reason a bank statement opens freely yet refuses to be copied.
+            const perms = await engine.callJSON('read_permissions', 'protect');
+            const already = perms.restricted
+                ? ` · <span class="warn">already restricted</span> (blocks ${
+                    Object.entries(perms.allowed)
+                        .filter(([name, ok]) => !ok && name !== 'accessibility')
+                        .map(([name]) => name).join(', ') || 'screen readers'})`
+                : '';
             $('protect-summary').innerHTML =
-                `<strong>${file.name}</strong> - ${info.pages} page(s) · ${formatSize(file.size)}`;
+                `<strong>${file.name}</strong> - ${info.pages} page(s) · ${formatSize(file.size)}${already}`;
         });
     },
 
-    async encrypt() {
-        const pw = $('protect-user-pw').value;
-        if (!pw) return UI.toast('Enter an open password', 'error');
-        const settings = () => engine.call('encrypt', 'protect', pw, $('protect-owner-pw').value,
-                                           $('perm-print').checked, $('perm-copy').checked,
-                                           $('perm-modify').checked, $('perm-annot').checked);
+    async apply() {
+        const viewOnly = this.mode() === 'viewonly';
+        const userPw = viewOnly ? '' : $('protect-user-pw').value;
+        if (!viewOnly && !userPw) return UI.toast('Enter an open password', 'error');
+
+        const typed = $('protect-owner-pw').value;
+        if (typed && typed === userPw) {
+            return UI.toast('The restriction password must differ from the open password', 'error');
+        }
+        const ownerPw = typed || this.generatedOwner();
+
+        const perms = this.args();
+        const settings = () => engine.call('restrict', 'protect', userPw, ownerPw, ...perms);
+        const suffix = viewOnly ? 'view-only' : 'protected';
+
         if (this.files && this.files.length > 1) {
-            return UI.run('Encrypting files…', () => runBatch({
-                files: this.files, docId: 'protect', suffix: 'protected',
+            return UI.run(viewOnly ? 'Restricting files…' : 'Encrypting files…', () => runBatch({
+                files: this.files, docId: 'protect', suffix,
                 apply: settings, report: (html) => batchReport('protect', html),
             }));
         }
-        await UI.run('Encrypting with AES-256…', async () => {
-            const bytes = await engine.call('encrypt', 'protect', pw, $('protect-owner-pw').value,
-                                            $('perm-print').checked, $('perm-copy').checked,
-                                            $('perm-modify').checked, $('perm-annot').checked);
-            download(bytes, 'protected.pdf');
-            UI.toast('Encrypted - text stays searchable for anyone with the password', 'success');
+
+        await UI.run(viewOnly ? 'Applying restrictions…' : 'Encrypting with AES-256…', async () => {
+            const bytes = await engine.call('restrict', 'protect', userPw, ownerPw, ...perms);
+            download(bytes, `${suffix}.pdf`);
+            this.report(viewOnly, typed ? '' : ownerPw);
         });
+    },
+
+    /** Say what the file now allows, read back from the file rather than from
+     *  the boxes that were ticked - the point of the feature is the result. */
+    report(viewOnly, generated) {
+        const denied = this.PERMS
+            .filter(([name, id]) => !$(id).checked && name !== 'accessibility')
+            .map(([name]) => ({
+                print: 'printing', copy: 'copying text', modify: 'editing',
+                annotate: 'commenting', forms: 'filling forms',
+                assemble: 'extracting pages',
+            }[name]));
+
+        const box = $('protect-result');
+        box.classList.remove('hidden');
+        box.innerHTML = [
+            viewOnly
+                ? '<strong>View only.</strong> The file opens for anyone with no password.'
+                : '<strong>Encrypted with AES-256.</strong> The password is needed to open it.',
+            denied.length ? `Blocked: ${denied.join(', ')}.` : 'Nothing is blocked.',
+            generated
+                ? '<br>Restriction password, if you ever need to change these permissions: '
+                  + `<code>${generated}</code><br><span class="muted">Not needed to read the file. `
+                  + 'Your unrestricted original is untouched, so there is nothing to save here.</span>'
+                : '',
+        ].filter(Boolean).join(' ');
+        UI.toast(viewOnly ? 'Saved as view only' : 'Encrypted', 'success');
     },
 
     async decrypt() {
@@ -4427,8 +4520,9 @@ const TOOL_CARDS = [
       blurb: 'Check a signed 26AS, Form 16 or invoice: who signed it, and has it changed since.', badge: 'New' },
     { group: 'Protect', tab: 'redact', icon: '⬛', name: 'Redact',
       blurb: 'Black out content so it is deleted from the file, not just covered.' },
-    { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Password Protect',
-      blurb: 'AES-256 encryption with per-permission control.' },
+    { group: 'Protect', tab: 'protect', icon: '🔒', name: 'Protect & Restrict',
+      blurb: 'View-only files that cannot be printed, copied or edited - or AES-256 with a password.',
+      badge: 'New' },
 
     { group: 'Convert', tab: 'photos', icon: '📷', name: 'Photos to PDF',
       blurb: 'Pictures of paper into one document - straightened and sized down.', badge: 'New' },
