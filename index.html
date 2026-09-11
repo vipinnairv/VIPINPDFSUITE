@@ -13,14 +13,14 @@
 
     <!-- SVG first for modern browsers; .ico covers older ones and the
          automatic /favicon.ico request. -->
-    <link rel="icon" href="favicon.svg?v=4.31.0" type="image/svg+xml">
-    <link rel="icon" href="favicon.ico?v=4.31.0" sizes="16x16 32x32 48x48">
-    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.31.0">
-    <link rel="manifest" href="site.webmanifest?v=4.31.0">
+    <link rel="icon" href="favicon.svg?v=4.32.0" type="image/svg+xml">
+    <link rel="icon" href="favicon.ico?v=4.32.0" sizes="16x16 32x32 48x48">
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=4.32.0">
+    <link rel="manifest" href="site.webmanifest?v=4.32.0">
 
     <!-- ?v= busts the browser cache on redeploy: without it a stale app.js/style.css
          pair silently breaks the page. Bump APP_VERSION in app.js to match. -->
-    <link rel="stylesheet" href="style.css?v=4.31.0">
+    <link rel="stylesheet" href="style.css?v=4.32.0">
     <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <!-- Only for digital signatures: reads a .p12/.pfx and builds the CMS
@@ -31,7 +31,7 @@
     <header class="header">
         <div class="header__content">
             <h1 class="header__title">
-                <img class="header__logo" src="logo.svg?v=4.31.0" alt="" width="34" height="34">
+                <img class="header__logo" src="logo.svg?v=4.32.0" alt="" width="34" height="34">
                 MiyeePDF <span class="header__byline">Built by Vipin Nair</span>
             </h1>
             <div class="header__right">
@@ -650,8 +650,8 @@
         <!-- ============================= PROTECT ============================ -->
         <div class="tab-content" id="protect-tab" role="tabpanel" tabindex="0">
             <div class="tool-header">
-                <h2>Protect with a Password</h2>
-                <p>Real AES-256 encryption applied to the document itself - pages are never flattened to images</p>
+                <h2>Protect &amp; Restrict</h2>
+                <p>Send a file that opens for anyone but cannot be printed, copied or edited - or lock it behind real AES-256. Pages are never flattened to images either way</p>
             </div>
             <div class="file-drop-zone" data-drop="protect" role="button" tabindex="0" aria-label="Choose one or more PDFs, or drop them here">
                 <p>Drop one or more PDFs here, or click to select</p>
@@ -662,27 +662,54 @@
                 <div id="protect-summary" class="summary-box"></div>
                 <div id="protect-result" class="result-box hidden"></div>
                 <div class="form-group">
-                    <label class="form-label">Open password (required to view)</label>
+                    <label class="form-label">What kind of protection?</label>
+                    <div class="mode-choice" role="radiogroup" aria-label="Protection type">
+                        <label class="mode-option">
+                            <input type="radio" name="protect-mode" value="viewonly" id="protect-mode-viewonly" checked>
+                            <span class="mode-option__body">
+                                <strong>View only</strong>
+                                <span>Opens for anyone, no password needed. Printing, copying and editing are switched off.</span>
+                            </span>
+                        </label>
+                        <label class="mode-option">
+                            <input type="radio" name="protect-mode" value="password" id="protect-mode-password">
+                            <span class="mode-option__body">
+                                <strong>Password to open</strong>
+                                <span>The file itself is unreadable without the password. Permissions apply once it is open.</span>
+                            </span>
+                        </label>
+                    </div>
+                </div>
+                <div class="form-group hidden" id="protect-open-pw-group">
+                    <label class="form-label" for="protect-user-pw">Open password (required to view)</label>
                     <input type="password" id="protect-user-pw" class="form-control" placeholder="Enter a password">
                 </div>
                 <div class="form-group">
-                    <label class="form-label">Owner password (optional - controls permissions)</label>
-                    <input type="password" id="protect-owner-pw" class="form-control" placeholder="Defaults to the open password">
+                    <label class="form-label" for="protect-owner-pw">Restriction password (optional)</label>
+                    <input type="password" id="protect-owner-pw" class="form-control" placeholder="Leave blank and one is generated for you">
+                    <p class="hint hint--inline">Needed only to change these permissions later. It must differ from the open password, so leaving it blank generates a random one - you keep the original file, so there is nothing to remember.</p>
                 </div>
                 <div class="form-group">
                     <label class="form-label">Allow recipients to…</label>
                     <div class="checkbox-grid">
-                        <label class="checkbox-row"><input type="checkbox" id="perm-print" checked> Print</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-print"> Print</label>
                         <label class="checkbox-row"><input type="checkbox" id="perm-copy"> Copy text</label>
-                        <label class="checkbox-row"><input type="checkbox" id="perm-modify"> Modify</label>
-                        <label class="checkbox-row"><input type="checkbox" id="perm-annot"> Annotate</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-modify"> Change the document</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-annot"> Add comments</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-forms"> Fill in forms</label>
+                        <label class="checkbox-row"><input type="checkbox" id="perm-assemble"> Extract or reorder pages</label>
                     </div>
+                    <label class="checkbox-row"><input type="checkbox" id="perm-access" checked> Let screen readers read the text aloud</label>
+                    <p class="hint hint--inline">Kept on by default. It is a separate permission from copying for exactly this reason: switching it off stops a blind reader opening the document at all, while barely slowing down anyone determined to copy from it.</p>
                 </div>
                 <div class="action-buttons">
-                    <button class="btn btn--primary" id="protect-run">🔒 Encrypt PDF</button>
-                    <button class="btn btn--outline" id="protect-remove">🔓 Remove Password</button>
+                    <button class="btn btn--primary" id="protect-run">🔒 Apply Protection</button>
+                    <button class="btn btn--outline" id="protect-remove">🔓 Remove Protection</button>
                 </div>
-                <p class="hint hint--inline">Removing a password needs the password: you are asked for it when the file is opened. Several files at once share the first one that works, and only a file it does not open asks again. This also lifts owner restrictions - the kind that let a bank statement open freely but block copying or printing.</p>
+                <div class="notice notice--warn">
+                    <strong>What view only does and does not do.</strong> Printing, copying and editing are switched off by a flag in the file, and every mainstream reader - Acrobat, Chrome, Edge, Preview - obeys it: the buttons grey out. But the flag is a request to the reader, not a lock on the bytes. Software that ignores it exists, screenshots always work, and <em>Remove Protection</em> above lifts it in one click. So it reliably stops casual printing and copying and makes your intent unmistakable; it is not a guarantee against someone determined. For that, use <strong>Password to open</strong> - without the password the bytes cannot be read at all.
+                </div>
+                <p class="hint hint--inline"><strong>Remove Protection</strong> needs the open password, and asks for it when the file is opened. Several files at once share the first one that works, and only a file it does not open asks again. It also lifts view-only restrictions - the kind that let a bank statement open freely but refuse to be copied or printed.</p>
                 <div class="action-buttons" hidden>
                 </div>
             </div>
@@ -1205,6 +1232,6 @@
         </div>
     </footer>
 
-    <script src="app.js?v=4.31.0"></script>
+    <script src="app.js?v=4.32.0"></script>
 </body>
 </html>

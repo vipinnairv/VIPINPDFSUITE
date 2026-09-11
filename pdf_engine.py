@@ -841,23 +841,91 @@ def redact_search(doc_id, needle, pages_spec="", fill="#000000"):
 # protection
 # --------------------------------------------------------------------------
 
-def encrypt(doc_id, user_pw, owner_pw="", allow_print=True, allow_copy=False,
-            allow_modify=False, allow_annotate=False):
-    """AES-256 encrypt the document itself - pages are never rasterised."""
+# The eight things a PDF can permit, in the order a person thinks of them.
+# Accessibility is kept separate from copying deliberately: see restrict().
+_PERM_BITS = {
+    "print": pymupdf.PDF_PERM_PRINT | pymupdf.PDF_PERM_PRINT_HQ,
+    "copy": pymupdf.PDF_PERM_COPY,
+    "modify": pymupdf.PDF_PERM_MODIFY,
+    "annotate": pymupdf.PDF_PERM_ANNOTATE,
+    "forms": pymupdf.PDF_PERM_FORM,
+    "assemble": pymupdf.PDF_PERM_ASSEMBLE,
+    "accessibility": pymupdf.PDF_PERM_ACCESSIBILITY,
+}
+
+
+_ALL_PERMS = 0
+for _bits in _PERM_BITS.values():
+    _ALL_PERMS |= _bits
+
+
+def read_permissions(doc_id):
+    """What the open document allows, so a restricted file can be recognised."""
+    doc = _doc(doc_id)
+    allowed = {name: bool(doc.permissions & bits) for name, bits in _PERM_BITS.items()}
+    return json.dumps({
+        "allowed": allowed,
+        # A file that permits everything is not restricted, whether or not it
+        # happens to be encrypted.
+        "restricted": not all(allowed.values()),
+        "needs_password": bool(doc.needs_pass),
+    })
+
+
+def restrict(doc_id, user_pw="", owner_pw="", allow_print=False, allow_copy=False,
+             allow_modify=False, allow_annotate=False, allow_forms=False,
+             allow_assemble=False, allow_accessibility=True):
+    """Re-save under AES-256 with only the chosen permissions granted.
+
+    Two quite different things are done by the one call, and the difference is
+    the user password rather than any flag:
+
+      - Given one, the bytes themselves are unreadable without it. That is
+        real confidentiality, enforced by arithmetic.
+      - Left empty, the file opens for anyone and the permissions are all that
+        stand in the way. Those are enforced by the reader, not by the file -
+        which is the whole of "view only" and its whole limitation.
+
+    Pages are never rasterised either way, so the text stays selectable for
+    the readers that are allowed to select it, and searchable for the ones
+    that are not.
+
+    Accessibility (extracting text for a screen reader) defaults to allowed
+    even when copying is not. The two bits are separate for exactly this
+    reason, PDF 2.0 deprecates denying it, and switching it off stops a blind
+    reader opening the document at all while barely inconveniencing anyone
+    determined to copy from it.
+    """
     doc = _doc(doc_id)
     perms = 0
-    if allow_print:
-        perms |= pymupdf.PDF_PERM_PRINT | pymupdf.PDF_PERM_PRINT_HQ
-    if allow_copy:
-        perms |= pymupdf.PDF_PERM_COPY
-    if allow_modify:
-        perms |= pymupdf.PDF_PERM_MODIFY
-    if allow_annotate:
-        perms |= pymupdf.PDF_PERM_ANNOTATE
+    for name, granted in (("print", allow_print), ("copy", allow_copy),
+                          ("modify", allow_modify), ("annotate", allow_annotate),
+                          ("forms", allow_forms), ("assemble", allow_assemble),
+                          ("accessibility", allow_accessibility)):
+        if granted:
+            perms |= _PERM_BITS[name]
+
+    # The owner password is what makes a restriction hold, and two ways of
+    # getting it wrong void every flag above without any error being raised.
+    #
+    # Leave it empty and a reader finds the empty string, opens the document
+    # with owner rights, and enables every control. Set it to the same string
+    # as the open password - which the panel used to offer as the default -
+    # and anyone able to open the file is the owner, with the same result.
+    # Measured both ways: authenticating returns OWNER and the permission
+    # bitmap comes back fully allowed.
+    owner = owner_pw or user_pw
+    if not owner:
+        raise ValueError("A restricted document needs an owner password")
+    if perms != _ALL_PERMS and owner == user_pw:
+        raise ValueError(
+            "The restriction password must differ from the open password, "
+            "or anyone who can open the file can lift the restrictions"
+        )
 
     return doc.tobytes(
         encryption=pymupdf.PDF_ENCRYPT_AES_256,
-        owner_pw=owner_pw or user_pw,
+        owner_pw=owner,
         user_pw=user_pw,
         permissions=perms,
         garbage=3,

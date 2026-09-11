@@ -1305,6 +1305,48 @@ body {
 
 .checkbox-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-4); }
 
+/* A plain-spoken callout for the things a tool cannot do. Routed through the
+   warning token so all four themes follow without a second definition. */
+.notice {
+  margin: 0 var(--space-24) var(--space-16);
+  padding: var(--space-12) var(--space-16);
+  border-radius: var(--radius-base);
+  border: 1px solid rgba(var(--color-warning-rgb), 0.35);
+  border-left: 3px solid var(--color-warning);
+  background: rgba(var(--color-warning-rgb), 0.07);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.55;
+}
+
+.notice strong { color: var(--color-text); }
+
+/* Two mutually exclusive ways to protect a file, each needing a sentence of
+   explanation - too much for a radio label on its own. */
+.mode-choice { display: grid; gap: var(--space-8); }
+
+.mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-10);
+  padding: var(--space-12);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-bg-1);
+  cursor: pointer;
+}
+
+.mode-option:hover { border-color: var(--color-primary); }
+
+.mode-option:has(input:checked) {
+  border-color: var(--color-primary);
+  background: rgba(var(--color-teal-500-rgb), 0.08);
+}
+
+.mode-option input { margin-top: 2px; flex: none; }
+.mode-option__body { display: grid; gap: 2px; font-size: var(--font-size-sm); }
+.mode-option__body span { color: var(--color-text-secondary); font-size: var(--font-size-xs); }
+
 .stamp-gallery { display: flex; flex-wrap: wrap; gap: var(--space-6); margin-bottom: var(--space-16); }
 
 .stamp-btn {
