@@ -16,6 +16,7 @@ import hashlib
 import io
 import json
 import re
+import secrets
 
 import pymupdf
 
@@ -25,6 +26,10 @@ _DOCS = {}
 # Recorded once at open time because reading Document.needs_pass on an
 # authenticated document de-authenticates it.
 _WAS_ENCRYPTED = {}
+# What protection each open document arrived with, so saving cannot quietly
+# hand back a copy with less of it than it started with.
+_OPEN_PASSWORD = {}
+_ORIGINAL_PERMS = {}
 
 # doc_id -> {"undo": [bytes], "redo": [bytes]}
 #
@@ -296,12 +301,18 @@ def open_doc(doc_id, data, password=""):
             raise ValueError("PASSWORD_REQUIRED")
     _DOCS[doc_id] = doc
     _WAS_ENCRYPTED[doc_id] = was_encrypted
+    # Read the permissions now, while authenticated, and keep the password that
+    # opened the file. Saving re-applies both: see _protected_bytes.
+    _OPEN_PASSWORD[doc_id] = password if was_encrypted else ""
+    _ORIGINAL_PERMS[doc_id] = doc.permissions
     return json.dumps(doc_info(doc_id))
 
 
 def close_doc(doc_id):
     doc = _DOCS.pop(doc_id, None)
     _WAS_ENCRYPTED.pop(doc_id, None)
+    _OPEN_PASSWORD.pop(doc_id, None)
+    _ORIGINAL_PERMS.pop(doc_id, None)
     _HISTORY.pop(doc_id, None)
     _OCR_PAGES.pop(doc_id, None)
     for key in [k for k in _OCR_DOUBTS if k[0] == doc_id]:
@@ -430,9 +441,85 @@ def render_thumb(doc_id, pno, width=132):
     return pix.tobytes("png")
 
 
+def _protection_of(doc_id):
+    """The protection a document arrived with, or None if it had none.
+
+    Returns (user_password, permission_bits).
+    """
+    perms = _ORIGINAL_PERMS.get(doc_id)
+    if perms is None:
+        return None
+    granted = perms & _ALL_PERMS
+    user_pw = _OPEN_PASSWORD.get(doc_id, "") or ""
+    if not user_pw and granted == _ALL_PERMS:
+        return None
+    return user_pw, granted
+
+
+def _protected_bytes(doc, doc_id, **kwargs):
+    """Serialise, re-applying whatever protection the document came with.
+
+    Saving used to write the working document out plainly, whatever it had
+    arrived as. A view-only file opened in any tab and saved came back with
+    every restriction gone, and a password-protected one came back with no
+    password at all - so the file that left was weaker than the file that
+    arrived, without anything being said. Measured before this existed: both.
+
+    The owner password cannot be carried over, because it is not recoverable
+    from a document opened as its user - so a fresh random one is minted.
+    Nothing is lost: nobody held the old one either, and what has to survive
+    is the restrictions, which is what other software reads.
+    """
+    protection = _protection_of(doc_id)
+    if protection is None:
+        return doc.tobytes(**kwargs)
+    user_pw, granted = protection
+    # Must differ from the user password or readers treat every opener as the
+    # owner and ignore the flags entirely.
+    owner_pw = secrets.token_hex(16)
+    return doc.tobytes(
+        encryption=pymupdf.PDF_ENCRYPT_AES_256,
+        owner_pw=owner_pw,
+        user_pw=user_pw,
+        permissions=granted,
+        **kwargs,
+    )
+
+
+def _merged_protected_bytes(doc, doc_ids, **kwargs):
+    """Serialise a bundle under the strictest protection any source carried.
+
+    Joining a view-only annexure to an open one must not launder the first.
+    A password is only re-applied when every source needed one, and then only
+    if they agreed on it - otherwise there is no single password the bundle
+    could honestly ask for, so the restrictions are kept and the password is
+    not, which never makes the result more open than any part allowed.
+    """
+    parts = [_protection_of(i) for i in doc_ids]
+    real = [p for p in parts if p is not None]
+    if not real:
+        return doc.tobytes(**kwargs)
+
+    granted = _ALL_PERMS
+    for _, bits in real:
+        granted &= bits
+
+    passwords = {pw for pw, _ in real if pw}
+    user_pw = passwords.pop() if len(passwords) == 1 and len(real) == len(doc_ids) else ""
+
+    return doc.tobytes(
+        encryption=pymupdf.PDF_ENCRYPT_AES_256,
+        owner_pw=secrets.token_hex(16),
+        user_pw=user_pw,
+        permissions=granted,
+        **kwargs,
+    )
+
+
 def save(doc_id, garbage=3, deflate=True):
     """Serialise the working document."""
-    return _doc(doc_id).tobytes(garbage=int(garbage), deflate=bool(deflate), clean=True)
+    return _protected_bytes(_doc(doc_id), doc_id,
+                            garbage=int(garbage), deflate=bool(deflate), clean=True)
 
 
 # --------------------------------------------------------------------------
@@ -1005,8 +1092,8 @@ def compress(doc_id, level="medium"):
                 except Exception:
                     pass
 
-    return doc.tobytes(garbage=4, deflate=True, clean=True, deflate_images=True,
-                       deflate_fonts=True)
+    return _protected_bytes(doc, doc_id, garbage=4, deflate=True, clean=True,
+                            deflate_images=True, deflate_fonts=True)
 
 
 # --------------------------------------------------------------------------
@@ -1119,7 +1206,9 @@ def merge(doc_ids_json, labels_json="", bookmarks=False, contents=False, title="
                     toc.append([level + 1, name, start + lead + pno])
         out.set_toc(toc)
 
-    data = out.tobytes(garbage=3, deflate=True)
+    # A bundle is only as shareable as its most restricted part, so the
+    # permissions carried over are the intersection of the sources'.
+    data = _merged_protected_bytes(out, ids, garbage=3, deflate=True)
     out.close()
     return data
 
@@ -1188,7 +1277,7 @@ def organize(doc_id, order_json, rotations_json="{}", crops_json="{}"):
         rot = rotations.get(str(original), rotations.get(int(original), 0)) or 0
         if rot:
             page.set_rotation((page.rotation + int(rot)) % 360)
-    data = out.tobytes(garbage=3, deflate=True)
+    data = _protected_bytes(out, doc_id, garbage=3, deflate=True)
     out.close()
     return data
 
@@ -3192,7 +3281,7 @@ def list_annotations(doc_id):
 def flatten_annotations(doc_id):
     """Bake annotations into the page content so they cannot be edited away."""
     doc = _doc(doc_id)
-    return doc.tobytes(garbage=3, deflate=True)
+    return _protected_bytes(doc, doc_id, garbage=3, deflate=True)
 
 
 # --------------------------------------------------------------------------
